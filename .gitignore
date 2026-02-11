@@ -30,8 +30,14 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
-# env files (can opt-in for committing if needed)
+# env files
 .env*
+
+# project docs (not for repo)
+challenge5_strategy.md
+pumpwise_jira_tickets*.xlsx
+seed_pump_catalog.json
+seed_pump_catalog_summary.md
 
 # vercel
 .vercel

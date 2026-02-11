@@ -1,0 +1,963 @@
+{
+  "catalog_metadata": {
+    "project": "GrundMatch - AI Pump Advisor for Grundfos",
+    "purpose": "Hackathon seed catalog - temporary product data",
+    "compiled_date": "2026-02-10",
+    "data_quality_note": "Specifications gathered from public Grundfos product pages, distributor sites, and datasheets. Values are approximate and should be verified against official Grundfos documentation for production use.",
+    "unit_conventions": {
+      "flow": "m³/h",
+      "head": "m (meters)",
+      "power": "kW",
+      "voltage": "V",
+      "connection": "DN (mm) or Rp (inches)"
+    }
+  },
+
+  "pumps": [
+    {
+      "id": "MAGNA3-25-40",
+      "model": "MAGNA3 25-40",
+      "family": "MAGNA3",
+      "category": "Circulator",
+      "type": "Variable-speed wet-rotor circulator",
+      "applications": ["Heating systems", "Cooling systems", "Domestic hot water recirculation"],
+      "specs": {
+        "max_flow_m3h": 3.5,
+        "max_head_m": 4.0,
+        "power_kw": 0.112,
+        "power_range_w": "9-112",
+        "voltage": "1x230V",
+        "frequency_hz": 50,
+        "energy_class": "A",
+        "eei": 0.18,
+        "connection_dn": 25,
+        "installation_length_mm": 180,
+        "max_pressure_bar": 10,
+        "temp_range_c": "-10 to 110"
+      },
+      "features": [
+        "AUTOADAPT function",
+        "Permanent magnet motor (ECM)",
+        "Integrated frequency converter",
+        "Built-in differential pressure sensor",
+        "Built-in temperature sensor",
+        "FLOWLIMIT function",
+        "Grundfos GO Remote app compatible",
+        "No maintenance required (canned rotor)"
+      ],
+      "estimated_annual_kwh": 100,
+      "price_range_eur": "400-550",
+      "price_range_usd": "450-600",
+      "competitor_equivalents": {
+        "wilo": "Wilo Stratos PICO 25/1-4",
+        "ksb": "KSB Calio S 25-40",
+        "xylem": "Xylem Lowara ecocirc 25-4/130"
+      }
+    },
+    {
+      "id": "MAGNA3-32-100",
+      "model": "MAGNA3 32-100",
+      "family": "MAGNA3",
+      "category": "Circulator",
+      "type": "Variable-speed wet-rotor circulator",
+      "applications": ["Commercial heating", "Cooling systems", "Air conditioning", "District heating substations"],
+      "specs": {
+        "max_flow_m3h": 12.0,
+        "max_head_m": 10.0,
+        "power_kw": 0.178,
+        "power_range_w": "10-178",
+        "voltage": "1x230V",
+        "frequency_hz": 50,
+        "energy_class": "A",
+        "eei": 0.20,
+        "connection_dn": 32,
+        "installation_length_mm": 180,
+        "max_pressure_bar": 10,
+        "temp_range_c": "-10 to 110"
+      },
+      "features": [
+        "AUTOADAPT function",
+        "Permanent magnet motor (ECM)",
+        "Integrated frequency converter",
+        "Built-in differential pressure and temperature sensors",
+        "TF 110 high-temperature variant available",
+        "FLOWLIMIT and FLOWADAPT",
+        "Grundfos GO Remote app compatible"
+      ],
+      "estimated_annual_kwh": 250,
+      "price_range_eur": "550-750",
+      "price_range_usd": "600-850",
+      "competitor_equivalents": {
+        "wilo": "Wilo Stratos MAXO 25/0.5-10",
+        "ksb": "KSB Calio S 32-100",
+        "xylem": "Xylem Lowara ecocirc XL 32-100"
+      }
+    },
+    {
+      "id": "MAGNA3-40-120",
+      "model": "MAGNA3 40-120 F",
+      "family": "MAGNA3",
+      "category": "Circulator",
+      "type": "Variable-speed wet-rotor circulator (flanged)",
+      "applications": ["Large commercial heating/cooling", "Industrial circulation", "District heating"],
+      "specs": {
+        "max_flow_m3h": 25.6,
+        "max_head_m": 12.0,
+        "power_kw": 0.448,
+        "power_range_w": "15-448",
+        "voltage": "1x230V",
+        "frequency_hz": "50/60",
+        "energy_class": "A",
+        "eei": 0.19,
+        "connection_dn": 40,
+        "installation_length_mm": 250,
+        "max_pressure_bar": 10,
+        "temp_range_c": "-10 to 110"
+      },
+      "features": [
+        "AUTOADAPT function",
+        "Permanent magnet motor (ECM)",
+        "Integrated frequency converter",
+        "Flanged connection",
+        "Built-in differential pressure and temperature sensors",
+        "FLOWLIMIT and FLOWADAPT",
+        "Grundfos GO Remote app compatible",
+        "Low noise level ~50 dB(A)"
+      ],
+      "estimated_annual_kwh": 500,
+      "price_range_eur": "900-1200",
+      "price_range_usd": "1500-2500",
+      "competitor_equivalents": {
+        "wilo": "Wilo Stratos MAXO 40/0.5-12",
+        "ksb": "KSB Calio S 40-120",
+        "xylem": "Xylem Lowara ecocirc XL 40-120"
+      }
+    },
+    {
+      "id": "ALPHA3-25-60",
+      "model": "ALPHA3 25-60",
+      "family": "ALPHA3",
+      "category": "Circulator",
+      "type": "Domestic variable-speed wet-rotor circulator",
+      "applications": ["Residential heating", "Underfloor heating", "Domestic hot water recirculation", "Solar heating"],
+      "specs": {
+        "max_flow_m3h": 3.4,
+        "max_head_m": 6.0,
+        "power_kw": 0.060,
+        "power_range_w": "3-60",
+        "voltage": "1x230V",
+        "frequency_hz": 50,
+        "energy_class": "A",
+        "eei": 0.19,
+        "connection_dn": 25,
+        "installation_length_mm": "130 or 180",
+        "max_pressure_bar": 10,
+        "temp_range_c": "2 to 110"
+      },
+      "features": [
+        "AUTOADAPT function",
+        "Permanent magnet motor (ECM)",
+        "Real-time power display (W)",
+        "Real-time flow display (m³/h)",
+        "Grundfos GO Remote app compatible",
+        "ALPHA Reader for system balancing",
+        "3 constant-pressure, 3 proportional-pressure, 3 fixed-speed modes",
+        "Night setback detection"
+      ],
+      "estimated_annual_kwh": 50,
+      "price_range_eur": "350-480",
+      "price_range_usd": "380-520",
+      "competitor_equivalents": {
+        "wilo": "Wilo Yonos PICO 25/1-6",
+        "ksb": "KSB Calio S 25-60",
+        "xylem": "Xylem Lowara ecocirc BASIC 25-6/130"
+      }
+    },
+    {
+      "id": "CR-3-5",
+      "model": "CR 3-5",
+      "family": "CR",
+      "category": "Multistage",
+      "type": "Vertical multistage centrifugal pump",
+      "applications": ["Water supply", "Pressure boosting", "Industrial washing", "Water treatment", "Cooling systems"],
+      "specs": {
+        "max_flow_m3h": 5.4,
+        "max_head_m": 44.0,
+        "power_kw": 0.56,
+        "stages": 5,
+        "voltage": "1x230V or 3x400V",
+        "frequency_hz": 50,
+        "rpm": 2900,
+        "connection_suction_dn": 25,
+        "connection_discharge_dn": 25,
+        "max_pressure_bar": 25,
+        "temp_range_c": "-20 to 120"
+      },
+      "features": [
+        "All stainless steel wetted parts (AISI 304)",
+        "Cartridge shaft seal (HQQE)",
+        "Compact vertical design",
+        "Wide range of material options",
+        "Modular stage design for easy servicing"
+      ],
+      "estimated_annual_kwh": 800,
+      "price_range_eur": "700-1000",
+      "price_range_usd": "750-1100",
+      "competitor_equivalents": {
+        "wilo": "Wilo Helix V 2-3/5",
+        "ksb": "KSB Movitec V 3/5",
+        "xylem": "Xylem Lowara e-SV 3/5"
+      }
+    },
+    {
+      "id": "CR-3-7",
+      "model": "CR 3-7",
+      "family": "CR",
+      "category": "Multistage",
+      "type": "Vertical multistage centrifugal pump",
+      "applications": ["Water supply", "Pressure boosting", "Industrial processes", "Cooling and condensation"],
+      "specs": {
+        "max_flow_m3h": 5.4,
+        "max_head_m": 64.0,
+        "power_kw": 1.1,
+        "stages": 7,
+        "voltage": "3x400V",
+        "frequency_hz": 50,
+        "rpm": 2900,
+        "connection_suction_dn": 25,
+        "connection_discharge_dn": 25,
+        "max_pressure_bar": 25,
+        "temp_range_c": "-20 to 120"
+      },
+      "features": [
+        "All stainless steel wetted parts (AISI 304)",
+        "Cartridge shaft seal (HQQE)",
+        "Compact vertical design",
+        "Modular stage design",
+        "Wide range of seals and materials"
+      ],
+      "estimated_annual_kwh": 1200,
+      "price_range_eur": "900-1300",
+      "price_range_usd": "950-1400",
+      "competitor_equivalents": {
+        "wilo": "Wilo Helix V 2-3/7",
+        "ksb": "KSB Movitec V 3/7",
+        "xylem": "Xylem Lowara e-SV 3/7"
+      }
+    },
+    {
+      "id": "CR-5-8",
+      "model": "CR 5-8",
+      "family": "CR",
+      "category": "Multistage",
+      "type": "Vertical multistage centrifugal pump",
+      "applications": ["Water supply", "Pressure boosting", "Irrigation", "Industrial processes"],
+      "specs": {
+        "max_flow_m3h": 10.2,
+        "max_head_m": 73.2,
+        "power_kw": 2.2,
+        "stages": 8,
+        "voltage": "3x400V",
+        "frequency_hz": 50,
+        "rpm": 2900,
+        "connection_suction_dn": 32,
+        "connection_discharge_dn": 32,
+        "max_pressure_bar": 25,
+        "temp_range_c": "-20 to 120"
+      },
+      "features": [
+        "All stainless steel wetted parts (AISI 304)",
+        "Cartridge shaft seal (HQQE)",
+        "Compact vertical design",
+        "High efficiency impellers",
+        "Modular stage design"
+      ],
+      "estimated_annual_kwh": 2500,
+      "price_range_eur": "1200-1800",
+      "price_range_usd": "1300-1900",
+      "competitor_equivalents": {
+        "wilo": "Wilo Helix V 5/8",
+        "ksb": "KSB Movitec V 5/8",
+        "xylem": "Xylem Lowara e-SV 5/8"
+      }
+    },
+    {
+      "id": "CR-10-6",
+      "model": "CR 10-6",
+      "family": "CR",
+      "category": "Multistage",
+      "type": "Vertical multistage centrifugal pump",
+      "applications": ["Water supply", "Pressure boosting", "Industrial water treatment", "Fire protection"],
+      "specs": {
+        "max_flow_m3h": 15.7,
+        "max_head_m": 87.1,
+        "power_kw": 3.7,
+        "stages": 6,
+        "voltage": "3x400V",
+        "frequency_hz": 50,
+        "rpm": 2900,
+        "connection_suction_dn": 50,
+        "connection_discharge_dn": 50,
+        "max_pressure_bar": 25,
+        "temp_range_c": "-20 to 120"
+      },
+      "features": [
+        "All stainless steel wetted parts (AISI 304)",
+        "Cartridge shaft seal (HQQE)",
+        "Compact vertical design",
+        "High efficiency impellers",
+        "Modular stage design"
+      ],
+      "estimated_annual_kwh": 4500,
+      "price_range_eur": "1800-2500",
+      "price_range_usd": "2000-2700",
+      "competitor_equivalents": {
+        "wilo": "Wilo Helix V 10/6",
+        "ksb": "KSB Movitec VF 10/6",
+        "xylem": "Xylem Lowara e-SV 10/6"
+      }
+    },
+    {
+      "id": "CR-15-4",
+      "model": "CR 15-4",
+      "family": "CR",
+      "category": "Multistage",
+      "type": "Vertical multistage centrifugal pump",
+      "applications": ["Water supply", "Pressure boosting", "Industrial processes", "HVAC"],
+      "specs": {
+        "max_flow_m3h": 28.4,
+        "max_head_m": 77.4,
+        "power_kw": 5.5,
+        "stages": 4,
+        "voltage": "3x400V",
+        "frequency_hz": 50,
+        "rpm": 2900,
+        "connection_suction_dn": 50,
+        "connection_discharge_dn": 50,
+        "max_pressure_bar": 25,
+        "temp_range_c": "-20 to 120"
+      },
+      "features": [
+        "All stainless steel wetted parts (AISI 304)",
+        "Cartridge shaft seal (HQQE)",
+        "Compact vertical design",
+        "High efficiency impellers",
+        "Suitable for VFD operation"
+      ],
+      "estimated_annual_kwh": 6000,
+      "price_range_eur": "2000-2800",
+      "price_range_usd": "2200-3000",
+      "competitor_equivalents": {
+        "wilo": "Wilo Helix V 15/4",
+        "ksb": "KSB Movitec VF 15/4",
+        "xylem": "Xylem Lowara e-SV 15/4"
+      }
+    },
+    {
+      "id": "CRE-5-8",
+      "model": "CRE 5-8",
+      "family": "CRE",
+      "category": "Multistage",
+      "type": "Variable-speed vertical multistage centrifugal pump",
+      "applications": ["Water supply", "Pressure boosting", "Process water", "OEM integration"],
+      "specs": {
+        "max_flow_m3h": 10.2,
+        "max_head_m": 73.2,
+        "power_kw": 2.2,
+        "stages": 8,
+        "voltage": "3x400V",
+        "frequency_hz": 50,
+        "rpm": "Variable (0-2900)",
+        "connection_suction_dn": 32,
+        "connection_discharge_dn": 32,
+        "max_pressure_bar": 25,
+        "temp_range_c": "-20 to 120"
+      },
+      "features": [
+        "Integrated variable frequency drive (VFD)",
+        "All stainless steel wetted parts (AISI 304)",
+        "Cartridge shaft seal (HQQE)",
+        "MGE motor with IE5 efficiency",
+        "Built-in PI controller",
+        "Plug-and-pump solution",
+        "Up to 50% energy savings vs. fixed speed",
+        "Dry-run protection"
+      ],
+      "estimated_annual_kwh": 1800,
+      "price_range_eur": "2500-3500",
+      "price_range_usd": "2700-3800",
+      "competitor_equivalents": {
+        "wilo": "Wilo Helix VE 5/8",
+        "ksb": "KSB Movitec VE 5/8",
+        "xylem": "Xylem Lowara e-SVE 5/8"
+      }
+    },
+    {
+      "id": "SP-5A-12",
+      "model": "SP 5A-12",
+      "family": "SP",
+      "category": "Submersible",
+      "type": "Submersible borehole pump",
+      "applications": ["Groundwater extraction", "Water supply", "Irrigation", "Pressure boosting from wells"],
+      "specs": {
+        "max_flow_m3h": 5.0,
+        "max_head_m": 49.0,
+        "power_kw": 1.1,
+        "stages": 12,
+        "voltage": "3x380-415V",
+        "frequency_hz": 50,
+        "motor": "MS402",
+        "borehole_diameter_inches": 4,
+        "connection_outlet": "Rp 1.5 inch",
+        "max_sand_ppm": 50,
+        "temp_range_c": "0 to 40"
+      },
+      "features": [
+        "All stainless steel construction (AISI 304)",
+        "Sand-resistant design (up to 50 g/m³)",
+        "Floating impellers for axial thrust compensation",
+        "Water-lubricated journal bearings",
+        "Volume compensating diaphragm",
+        "Can be installed vertically or horizontally"
+      ],
+      "estimated_annual_kwh": 2000,
+      "price_range_eur": "700-900",
+      "price_range_usd": "800-1000",
+      "competitor_equivalents": {
+        "wilo": "Wilo Sub TWU 4-0405",
+        "ksb": "KSB UPA 100C 5/12",
+        "xylem": "Xylem Lowara 4GS05"
+      }
+    },
+    {
+      "id": "SP-17-5",
+      "model": "SP 17-5",
+      "family": "SP",
+      "category": "Submersible",
+      "type": "Submersible borehole pump",
+      "applications": ["Municipal water supply", "Irrigation", "Industrial water extraction", "Dewatering"],
+      "specs": {
+        "max_flow_m3h": 22.2,
+        "max_head_m": 56.0,
+        "power_kw": 3.0,
+        "stages": 5,
+        "voltage": "3x380-415V",
+        "frequency_hz": 50,
+        "motor": "MS4000",
+        "borehole_diameter_inches": 4,
+        "connection_outlet": "Rp 2 inch",
+        "max_sand_ppm": 50,
+        "temp_range_c": "0 to 40"
+      },
+      "features": [
+        "All stainless steel construction (AISI 304)",
+        "Sand-resistant design",
+        "High flow capacity for 4-inch wells",
+        "Floating impellers",
+        "Water-lubricated journal bearings",
+        "Mechanical shaft seal"
+      ],
+      "estimated_annual_kwh": 5000,
+      "price_range_eur": "1200-1600",
+      "price_range_usd": "1300-1800",
+      "competitor_equivalents": {
+        "wilo": "Wilo Sub TWU 4-0418",
+        "ksb": "KSB UPA 150C 17/5",
+        "xylem": "Xylem Lowara 4GS15"
+      }
+    },
+    {
+      "id": "SP-30-3",
+      "model": "SP 30-3",
+      "family": "SP",
+      "category": "Submersible",
+      "type": "Submersible borehole pump",
+      "applications": ["Large-scale water supply", "Agricultural irrigation", "Industrial water supply", "Mine dewatering"],
+      "specs": {
+        "max_flow_m3h": 30.0,
+        "max_head_m": 22.0,
+        "power_kw": 4.0,
+        "stages": 3,
+        "voltage": "3x380-415V",
+        "frequency_hz": 50,
+        "motor": "MS4000",
+        "borehole_diameter_inches": 6,
+        "connection_outlet": "Rp 3 inch",
+        "max_sand_ppm": 50,
+        "temp_range_c": "0 to 40"
+      },
+      "features": [
+        "All stainless steel construction (AISI 304)",
+        "Sand-resistant design",
+        "High volume flow",
+        "Floating impellers for axial thrust compensation",
+        "Water-lubricated journal bearings",
+        "Suitable for 6-inch and larger boreholes"
+      ],
+      "estimated_annual_kwh": 6000,
+      "price_range_eur": "1500-2200",
+      "price_range_usd": "1600-2400",
+      "competitor_equivalents": {
+        "wilo": "Wilo Sub TWU 6-3003",
+        "ksb": "KSB UPA 200C 30/3",
+        "xylem": "Xylem Lowara 6GS30"
+      }
+    },
+    {
+      "id": "HYDRO-MPC-E",
+      "model": "Hydro MPC-E",
+      "family": "Hydro MPC",
+      "category": "Booster",
+      "type": "Multi-pump booster system",
+      "applications": ["Water supply in buildings", "Commercial/industrial pressure boosting", "Irrigation systems", "Municipal water supply"],
+      "specs": {
+        "max_flow_m3h": "Up to 70 (depends on CR pump configuration)",
+        "max_head_m": "Up to 180 (depends on CR pump configuration)",
+        "power_kw": "Varies (0.37 - 22 per pump)",
+        "num_pumps": "2-6 parallel connected",
+        "voltage": "3x380-415V",
+        "frequency_hz": 50,
+        "motor_type": "MGE with IE5 efficiency (up to 11 kW)",
+        "controller": "CU 352 integrated controller",
+        "max_pressure_bar": 16
+      },
+      "features": [
+        "Full speed control on all pumps",
+        "Integrated CU 352 advanced controller",
+        "Proportional-pressure mode for energy optimization",
+        "Multi-sensor function (up to 6 sensors)",
+        "Cascade control for pump duty alternation",
+        "Built-in dry-run and overpressure protection",
+        "Remote monitoring via Grundfos Remote Management",
+        "Stainless steel CR pump sets",
+        "Pre-assembled plug-and-pump solution"
+      ],
+      "estimated_annual_kwh": "3000-15000 depending on configuration",
+      "price_range_eur": "5000-25000",
+      "price_range_usd": "5500-28000",
+      "competitor_equivalents": {
+        "wilo": "Wilo SiBoost Smart Helix VE",
+        "ksb": "KSB Hya-Eco VP",
+        "xylem": "Xylem Lowara GHV"
+      }
+    },
+    {
+      "id": "SCALA2",
+      "model": "SCALA2",
+      "family": "SCALA",
+      "category": "Booster",
+      "type": "Self-priming domestic booster pump",
+      "applications": ["Domestic water pressure boosting", "Rainwater harvesting", "Garden irrigation", "Small commercial applications"],
+      "specs": {
+        "max_flow_m3h": 4.6,
+        "max_head_m": 45.0,
+        "power_kw": 0.55,
+        "voltage": "1x230V",
+        "frequency_hz": 50,
+        "max_suction_lift_m": 8.0,
+        "max_inlet_pressure_bar": 6,
+        "max_discharge_pressure_bar": 10,
+        "noise_level_dba": 47,
+        "weight_kg": 9.4
+      },
+      "features": [
+        "Integrated variable speed drive",
+        "Constant pressure technology",
+        "Self-priming up to 8 m",
+        "Ultra-quiet operation (47 dB)",
+        "Compact all-in-one design",
+        "Built-in water-cooled motor",
+        "Dry-run protection",
+        "Grundfos GO Remote app compatible",
+        "Anti-cycling function",
+        "Frost protection mode"
+      ],
+      "estimated_annual_kwh": 400,
+      "price_range_eur": "500-700",
+      "price_range_usd": "550-800",
+      "competitor_equivalents": {
+        "wilo": "Wilo HiMulti 3",
+        "ksb": "KSB Multi Eco-Pro 35",
+        "xylem": "Xylem Lowara e-HM"
+      }
+    },
+    {
+      "id": "NB-40-200",
+      "model": "NB 40-200",
+      "family": "NB",
+      "category": "End-suction",
+      "type": "Single-stage end-suction centrifugal pump (close-coupled)",
+      "applications": ["HVAC systems", "Water supply", "Industrial processes", "Fire protection", "Irrigation"],
+      "specs": {
+        "max_flow_m3h": 60.0,
+        "max_head_m": 50.0,
+        "power_kw": 11.0,
+        "voltage": "3x400V",
+        "frequency_hz": 50,
+        "rpm": 2900,
+        "connection_suction_dn": 40,
+        "connection_discharge_dn": 40,
+        "impeller_diameter_mm": 200,
+        "max_pressure_bar": 10,
+        "temp_range_c": "-25 to 140"
+      },
+      "features": [
+        "ISO 5199 design standard",
+        "EN 733 dimensions and performance",
+        "Back pull-out design",
+        "Close-coupled to fan-cooled motor",
+        "Closed impeller with double-curved blades",
+        "Cartridge shaft seal",
+        "Cast iron construction"
+      ],
+      "estimated_annual_kwh": 12000,
+      "price_range_eur": "2500-3500",
+      "price_range_usd": "2700-3800",
+      "competitor_equivalents": {
+        "wilo": "Wilo BL 40/200-11/2",
+        "ksb": "KSB Etanorm 40-200",
+        "xylem": "Xylem Lowara FHE 40-200"
+      }
+    },
+    {
+      "id": "NK-32-200",
+      "model": "NK 32-200",
+      "family": "NK",
+      "category": "End-suction",
+      "type": "Single-stage end-suction centrifugal pump (long-coupled)",
+      "applications": ["HVAC systems", "Water supply", "Industrial processes", "Irrigation"],
+      "specs": {
+        "max_flow_m3h": 30.0,
+        "max_head_m": 50.0,
+        "power_kw": 7.5,
+        "voltage": "3x400V",
+        "frequency_hz": 50,
+        "rpm": 2900,
+        "connection_suction_dn": 50,
+        "connection_discharge_dn": 32,
+        "impeller_diameter_mm": 200,
+        "max_pressure_bar": 10,
+        "temp_range_c": "-25 to 140"
+      },
+      "features": [
+        "ISO 5199 design standard",
+        "EN 733 dimensions and performance",
+        "Long-coupled with base frame",
+        "Back pull-out design",
+        "Rubber bellows seal (DIN EN 12756)",
+        "Foot-mounted motor",
+        "Cast iron volute"
+      ],
+      "estimated_annual_kwh": 9000,
+      "price_range_eur": "2000-3000",
+      "price_range_usd": "2200-3200",
+      "competitor_equivalents": {
+        "wilo": "Wilo BL 32/200-7.5/2",
+        "ksb": "KSB Etanorm 32-200",
+        "xylem": "Xylem Lowara FHE 32-200"
+      }
+    },
+    {
+      "id": "DDA-7.5-16",
+      "model": "DDA 7.5-16",
+      "family": "DDA",
+      "category": "Dosing",
+      "type": "Digital diaphragm dosing pump",
+      "applications": ["Water treatment", "Chemical dosing", "pH adjustment", "Chlorination", "Flocculation"],
+      "specs": {
+        "max_flow_lph": 7.5,
+        "max_pressure_bar": 16,
+        "power_kw": 0.025,
+        "voltage": "1x100-240V",
+        "frequency_hz": "50/60",
+        "stroke_length_mm": "Full stroke always",
+        "dosing_accuracy_percent": 1,
+        "connection_suction": "4/6 or 6/9 or 9/12 mm",
+        "weight_kg": 3.5
+      },
+      "features": [
+        "SMART Digital technology",
+        "Stepper motor drive (variable speed)",
+        "Full stroke for optimum accuracy",
+        "AutoFlowAdapt for viscous liquids",
+        "FlowControl with integrated pressure sensor",
+        "Turn-down ratio 1:3000",
+        "Automatic degassing",
+        "Multiple control modes: analog, pulse, batch, timer",
+        "Chemical-resistant PVC/PVDF wetted parts"
+      ],
+      "estimated_annual_kwh": 25,
+      "price_range_eur": "600-900",
+      "price_range_usd": "650-1000",
+      "competitor_equivalents": {
+        "wilo": "N/A (Wilo does not produce dosing pumps)",
+        "ksb": "N/A",
+        "prominent": "ProMinent gamma/X 0708",
+        "iwaki": "Iwaki EWN-B11"
+      }
+    },
+    {
+      "id": "DDA-12-10",
+      "model": "DDA 12-10",
+      "family": "DDA",
+      "category": "Dosing",
+      "type": "Digital diaphragm dosing pump",
+      "applications": ["Water treatment", "Chemical dosing", "Disinfection", "Process chemical injection"],
+      "specs": {
+        "max_flow_lph": 12.0,
+        "max_pressure_bar": 10,
+        "power_kw": 0.025,
+        "voltage": "1x100-240V",
+        "frequency_hz": "50/60",
+        "stroke_length_mm": "Full stroke always",
+        "dosing_accuracy_percent": 1,
+        "connection_suction": "4/6 or 6/9 or 9/12 mm",
+        "calibration_volume_ml": 500,
+        "weight_kg": 3.5
+      },
+      "features": [
+        "SMART Digital technology",
+        "Stepper motor drive (variable speed)",
+        "Full stroke for optimum accuracy",
+        "AutoFlowAdapt for viscous liquids",
+        "FlowControl with integrated pressure sensor",
+        "Turn-down ratio 1:3000",
+        "Automatic degassing",
+        "Multiple control modes: analog, pulse, batch, timer",
+        "Chemical-resistant wetted parts"
+      ],
+      "estimated_annual_kwh": 25,
+      "price_range_eur": "600-900",
+      "price_range_usd": "650-1000",
+      "competitor_equivalents": {
+        "wilo": "N/A",
+        "ksb": "N/A",
+        "prominent": "ProMinent gamma/X 1210",
+        "iwaki": "Iwaki EWN-B16"
+      }
+    },
+    {
+      "id": "SEG-40.09",
+      "model": "SEG 40.09",
+      "family": "SEG",
+      "category": "Wastewater",
+      "type": "Submersible sewage grinder pump",
+      "applications": ["Domestic wastewater", "Small community sewage", "Pressure sewer systems", "Basement drainage"],
+      "specs": {
+        "max_flow_m3h": 8.0,
+        "max_head_m": 20.0,
+        "power_kw": 0.9,
+        "voltage": "3x400V or 1x230V",
+        "frequency_hz": 50,
+        "discharge_dn": 40,
+        "free_passage_mm": "N/A (grinder system)",
+        "max_submersion_m": 10,
+        "max_liquid_temp_c": 40,
+        "weight_kg": 28
+      },
+      "features": [
+        "Patented grinder system",
+        "SmartTrim impeller clearance adjustment",
+        "Stainless steel clamp for easy service",
+        "Auto-coupling guide rail compatible",
+        "Thermal motor protection",
+        "AutoAdapt variant (E-model) available",
+        "Grinds solids for small-diameter pipes",
+        "Corrosion-resistant materials"
+      ],
+      "estimated_annual_kwh": 600,
+      "price_range_eur": "1200-1800",
+      "price_range_usd": "1300-2000",
+      "competitor_equivalents": {
+        "wilo": "Wilo Rexa CUT GI03",
+        "ksb": "KSB AmaGrind",
+        "xylem": "Xylem Flygt Grinder"
+      }
+    },
+    {
+      "id": "SE1.50",
+      "model": "SE1.50",
+      "family": "SE/SL",
+      "category": "Wastewater",
+      "type": "Submersible single-channel wastewater pump",
+      "applications": ["Municipal wastewater", "Process water", "Raw sewage", "Industrial effluent", "Stormwater"],
+      "specs": {
+        "max_flow_m3h": 72.0,
+        "max_head_m": 25.0,
+        "power_kw_range": "1.5-4.0",
+        "voltage": "3x400V",
+        "frequency_hz": 50,
+        "discharge_dn": "65 or 80",
+        "free_passage_mm": "65-80",
+        "max_submersion_m": 20,
+        "max_liquid_temp_c": 40,
+        "weight_kg": "45-65"
+      },
+      "features": [
+        "Single-channel impeller for large solids passage",
+        "Quick-detachable motor units",
+        "Solid-block stator housing with cooling conduits",
+        "Hermetically sealed cable entry",
+        "Auto-coupling guide-rail compatible",
+        "Freestanding or portable installation",
+        "SuperVortex impeller option",
+        "Stainless steel plug connector"
+      ],
+      "estimated_annual_kwh": 3000,
+      "price_range_eur": "2000-4000",
+      "price_range_usd": "2200-4500",
+      "competitor_equivalents": {
+        "wilo": "Wilo Rexa FIT V05",
+        "ksb": "KSB Amarex KRT",
+        "xylem": "Xylem Flygt 3068"
+      }
+    }
+  ],
+
+  "competitor_cross_reference": {
+    "circulators": {
+      "description": "High-efficiency variable-speed circulators for HVAC",
+      "mappings": [
+        {
+          "grundfos": "MAGNA3 25-40",
+          "wilo": "Stratos PICO 25/1-4",
+          "ksb": "Calio S 25-40",
+          "xylem_lowara": "ecocirc 25-4/130"
+        },
+        {
+          "grundfos": "MAGNA3 32-100",
+          "wilo": "Stratos MAXO 25/0.5-10",
+          "ksb": "Calio S 32-100",
+          "xylem_lowara": "ecocirc XL 32-100"
+        },
+        {
+          "grundfos": "MAGNA3 40-120 F",
+          "wilo": "Stratos MAXO 40/0.5-12",
+          "ksb": "Calio S 40-120",
+          "xylem_lowara": "ecocirc XL 40-120"
+        },
+        {
+          "grundfos": "ALPHA3 25-60",
+          "wilo": "Yonos PICO 25/1-6",
+          "ksb": "Calio S 25-60",
+          "xylem_lowara": "ecocirc BASIC 25-6"
+        }
+      ]
+    },
+    "multistage": {
+      "description": "Vertical multistage centrifugal pumps for pressure boosting",
+      "mappings": [
+        {
+          "grundfos": "CR 3",
+          "wilo": "Helix V / VE 2-3",
+          "ksb": "Movitec V 3",
+          "xylem_lowara": "e-SV 3"
+        },
+        {
+          "grundfos": "CR 5 / CRE 5",
+          "wilo": "Helix V / VE 5",
+          "ksb": "Movitec V 5",
+          "xylem_lowara": "e-SV 5 / e-SVE 5"
+        },
+        {
+          "grundfos": "CR 10",
+          "wilo": "Helix V / VE 10",
+          "ksb": "Movitec VF 10",
+          "xylem_lowara": "e-SV 10"
+        },
+        {
+          "grundfos": "CR 15",
+          "wilo": "Helix V / VE 15",
+          "ksb": "Movitec VF 15",
+          "xylem_lowara": "e-SV 15"
+        }
+      ]
+    },
+    "submersible": {
+      "description": "Submersible borehole pumps for groundwater",
+      "mappings": [
+        {
+          "grundfos": "SP 5A",
+          "wilo": "Sub TWU 4-04 / 4-05",
+          "ksb": "UPA 100C",
+          "xylem_lowara": "4GS / e-GS"
+        },
+        {
+          "grundfos": "SP 17",
+          "wilo": "Sub TWU 4-14 / 4-18",
+          "ksb": "UPA 150C",
+          "xylem_lowara": "6GS / e-GS"
+        },
+        {
+          "grundfos": "SP 30",
+          "wilo": "Sub TWU 6-30",
+          "ksb": "UPA 200C",
+          "xylem_lowara": "8GS / e-GS"
+        }
+      ]
+    },
+    "boosters": {
+      "description": "Packaged booster pump systems",
+      "mappings": [
+        {
+          "grundfos": "Hydro MPC-E",
+          "wilo": "SiBoost Smart Helix VE",
+          "ksb": "Hya-Eco VP",
+          "xylem_lowara": "GHV / Hydrovar"
+        },
+        {
+          "grundfos": "SCALA2",
+          "wilo": "HiMulti 3",
+          "ksb": "Multi Eco-Pro 35",
+          "xylem_lowara": "e-HM"
+        }
+      ]
+    },
+    "end_suction": {
+      "description": "Single-stage end-suction centrifugal pumps per EN 733",
+      "mappings": [
+        {
+          "grundfos": "NB 40-200",
+          "wilo": "BL 40/200",
+          "ksb": "Etanorm 40-200",
+          "xylem_lowara": "FHE 40-200"
+        },
+        {
+          "grundfos": "NK 32-200",
+          "wilo": "BL 32/200",
+          "ksb": "Etanorm 32-200",
+          "xylem_lowara": "FHE 32-200"
+        }
+      ]
+    },
+    "wastewater": {
+      "description": "Submersible wastewater and sewage pumps",
+      "mappings": [
+        {
+          "grundfos": "SEG 40.09",
+          "wilo": "Rexa CUT GI03",
+          "ksb": "AmaGrind",
+          "xylem": "Flygt Grinder"
+        },
+        {
+          "grundfos": "SE1.50",
+          "wilo": "Rexa FIT V05",
+          "ksb": "Amarex KRT",
+          "xylem": "Flygt 3068"
+        }
+      ]
+    },
+    "dosing": {
+      "description": "Digital dosing pumps for chemical metering",
+      "mappings": [
+        {
+          "grundfos": "DDA 7.5-16 / DDA 12-10",
+          "prominent": "gamma/X series",
+          "iwaki": "EWN-B series",
+          "milton_roy": "mROY series",
+          "note": "Wilo and KSB do not manufacture dosing pumps"
+        }
+      ]
+    }
+  }
+}
