@@ -26,6 +26,8 @@ interface ChatState {
   setMessages: (messages: Message[]) => void;
   addMessage: (message: Message) => void;
   appendToLastMessage: (content: string) => void;
+  replaceLastMessageContent: (content: string) => void;
+  updateLastMessageMetadata: (metadata: Record<string, unknown>) => void;
   setConversations: (conversations: Conversation[]) => void;
   setCurrentConversationId: (id: string | null) => void;
   setIsStreaming: (streaming: boolean) => void;
@@ -60,6 +62,24 @@ export const useChatStore = create<ChatState>((set) => ({
       const last = msgs[msgs.length - 1];
       if (last && last.role === "assistant") {
         msgs[msgs.length - 1] = { ...last, content: last.content + content };
+      }
+      return { messages: msgs };
+    }),
+  replaceLastMessageContent: (content) =>
+    set((state) => {
+      const msgs = [...state.messages];
+      const last = msgs[msgs.length - 1];
+      if (last && last.role === "assistant") {
+        msgs[msgs.length - 1] = { ...last, content };
+      }
+      return { messages: msgs };
+    }),
+  updateLastMessageMetadata: (metadata) =>
+    set((state) => {
+      const msgs = [...state.messages];
+      const last = msgs[msgs.length - 1];
+      if (last && last.role === "assistant") {
+        msgs[msgs.length - 1] = { ...last, metadata: { ...last.metadata, ...metadata } };
       }
       return { messages: msgs };
     }),

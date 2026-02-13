@@ -20,6 +20,7 @@
       "family": "MAGNA3",
       "category": "Circulator",
       "type": "Variable-speed wet-rotor circulator",
+      "image_url": "https://product-selection.grundfos.com/products/magna3-25-40-0-001-0-01?tab=variant-curves",
       "applications": ["Heating systems", "Cooling systems", "Domestic hot water recirculation"],
       "specs": {
         "max_flow_m3h": 3.5,
@@ -60,6 +61,7 @@
       "family": "MAGNA3",
       "category": "Circulator",
       "type": "Variable-speed wet-rotor circulator",
+      "image_url": "https://product-selection.grundfos.com/products/magna3-32-100-0-001-0-01?tab=variant-curves",
       "applications": ["Commercial heating", "Cooling systems", "Air conditioning", "District heating substations"],
       "specs": {
         "max_flow_m3h": 12.0,
@@ -99,6 +101,7 @@
       "family": "MAGNA3",
       "category": "Circulator",
       "type": "Variable-speed wet-rotor circulator (flanged)",
+      "image_url": "https://product-selection.grundfos.com/products/magna3-40-120-f-280-0-001-0-01?tab=variant-curves",
       "applications": ["Large commercial heating/cooling", "Industrial circulation", "District heating"],
       "specs": {
         "max_flow_m3h": 25.6,
@@ -139,6 +142,7 @@
       "family": "ALPHA3",
       "category": "Circulator",
       "type": "Domestic variable-speed wet-rotor circulator",
+      "image_url": "https://product-selection.grundfos.com/products/alpha3-25-60-180?tab=variant-curves",
       "applications": ["Residential heating", "Underfloor heating", "Domestic hot water recirculation", "Solar heating"],
       "specs": {
         "max_flow_m3h": 3.4,
@@ -179,6 +183,7 @@
       "family": "CR",
       "category": "Multistage",
       "type": "Vertical multistage centrifugal pump",
+      "image_url": "https://product-selection.grundfos.com/products/cr-3-5-a-f-a-e-hqqe?tab=variant-curves",
       "applications": ["Water supply", "Pressure boosting", "Industrial washing", "Water treatment", "Cooling systems"],
       "specs": {
         "max_flow_m3h": 5.4,

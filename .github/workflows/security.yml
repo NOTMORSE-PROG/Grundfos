@@ -1,0 +1,57 @@
+name: Security
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Run weekly on Monday at 9:00 UTC
+    - cron: "0 9 * * 1"
+
+env:
+  NODE_VERSION: "20"
+
+jobs:
+  dependency-audit:
+    name: Dependency Audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - name: Audit production dependencies
+        run: npm audit --omit=dev || true
+      - name: Check for known vulnerabilities
+        run: |
+          echo "## Dependency Audit" >> $GITHUB_STEP_SUMMARY
+          npm audit --omit=dev >> $GITHUB_STEP_SUMMARY 2>&1 || true
+
+  env-leak-check:
+    name: Secret Leak Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Check for hardcoded secrets
+        run: |
+          echo "Scanning for potential secret leaks..."
+          # Check for common secret patterns in source files
+          FOUND=0
+          for pattern in "gsk_[a-zA-Z0-9]" "hf_[a-zA-Z0-9]" "sk-[a-zA-Z0-9]" "eyJhbGciOi"; do
+            if grep -r --include="*.ts" --include="*.tsx" --include="*.js" --include="*.json" \
+              -l "$pattern" src/ 2>/dev/null; then
+              echo "::warning::Potential secret found matching pattern: $pattern"
+              FOUND=1
+            fi
+          done
+          if [ "$FOUND" -eq 0 ]; then
+            echo "No hardcoded secrets detected."
+          else
+            echo "::error::Potential hardcoded secrets found. Review the warnings above."
+            exit 1
+          fi

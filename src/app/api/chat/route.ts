@@ -1,8 +1,10 @@
 import { NextRequest } from "next/server";
 import { getGroqClient } from "@/lib/groq";
-import { SYSTEM_PROMPT, buildContextPrompt } from "@/lib/prompts";
+import { SYSTEM_PROMPT, buildContextPrompt, getStepInstruction, getFallbackSuggestions } from "@/lib/prompts";
 import { getServiceClient } from "@/lib/supabase";
 import { generateEmbedding } from "@/lib/embeddings";
+import { parseMessageMetadata } from "@/lib/parse-message-metadata";
+import { matchPumpsFromText, parseSavingsFromText } from "@/lib/match-pumps";
 import pumpCatalog from "@/data/pump-catalog.json";
 
 export const runtime = "nodejs";
@@ -12,6 +14,7 @@ interface ChatRequest {
   message: string;
   conversationId?: string;
   sessionId: string;
+  userMessageCount?: number;
 }
 
 // Fallback: search pumps from local JSON when Supabase isn't configured
@@ -98,7 +101,7 @@ async function getPumpContext(userMessage: string): Promise<string> {
 export async function POST(request: NextRequest) {
   try {
     const body: ChatRequest = await request.json();
-    const { message, conversationId, sessionId } = body;
+    const { message, conversationId, sessionId, userMessageCount: clientMsgCount } = body;
 
     if (!message || !sessionId) {
       return new Response(
@@ -113,15 +116,16 @@ export async function POST(request: NextRequest) {
     const pumpContext = await getPumpContext(message);
     const contextPrompt = buildContextPrompt(pumpContext);
 
-    // Build messages array
+    // Build messages array (system prompt added after we know the step)
     const chatMessages: Array<{
       role: "system" | "user" | "assistant";
       content: string;
-    }> = [{ role: "system", content: SYSTEM_PROMPT + contextPrompt }];
+    }> = [];
 
     // Load conversation history if exists
     let currentConversationId = conversationId;
     const supabase = getServiceClient();
+    const historyMessages: Array<{ role: string; content: string }> = [];
 
     if (supabase) {
       try {
@@ -135,10 +139,7 @@ export async function POST(request: NextRequest) {
 
           if (history) {
             for (const msg of history) {
-              chatMessages.push({
-                role: msg.role as "user" | "assistant",
-                content: msg.content,
-              });
+              historyMessages.push(msg);
             }
           }
         } else {
@@ -162,6 +163,29 @@ export async function POST(request: NextRequest) {
       } catch {
         // Supabase operation failed, continue without persistence
       }
+    }
+
+    // Count user messages — prefer frontend count (always accurate), fallback to history
+    const userMessageCount = clientMsgCount ?? (historyMessages.filter((m) => m.role === "user").length + 1);
+
+    // Build conversation context string for step instruction
+    const conversationSummary = historyMessages
+      .map((m) => `${m.role}: ${m.content}`)
+      .join("\n");
+
+    // Inject step-aware system prompt
+    const stepInstruction = getStepInstruction(userMessageCount, conversationSummary);
+    chatMessages.push({
+      role: "system",
+      content: SYSTEM_PROMPT + contextPrompt + "\n" + stepInstruction,
+    });
+
+    // Add history
+    for (const msg of historyMessages) {
+      chatMessages.push({
+        role: msg.role as "user" | "assistant",
+        content: msg.content,
+      });
     }
 
     chatMessages.push({ role: "user", content: message });
@@ -201,13 +225,32 @@ export async function POST(request: NextRequest) {
             }
           }
 
+          // Parse metadata from response
+          const parsed = parseMessageMetadata(fullResponse);
+
+          // Send clean content to replace the one with markers
+          if (parsed.content !== fullResponse) {
+            controller.enqueue(
+              encoder.encode(
+                `data: ${JSON.stringify({
+                  type: "replace_content",
+                  content: parsed.content,
+                })}\n\n`
+              )
+            );
+          }
+
           // Save assistant response
           if (supabase && currentConversationId) {
             try {
               await supabase.from("messages").insert({
                 conversation_id: currentConversationId,
                 role: "assistant",
-                content: fullResponse,
+                content: parsed.content,
+                metadata: {
+                  suggestions: parsed.suggestions,
+                  requirements: parsed.requirements,
+                },
               });
 
               if (!conversationId && fullResponse.length > 0) {
@@ -239,6 +282,28 @@ export async function POST(request: NextRequest) {
             } catch {
               // Not critical
             }
+          }
+
+          // Match pump models from AI response to catalog
+          const matchedPumps = matchPumpsFromText(fullResponse);
+          const pumpCards = matchedPumps.map((pump) => ({
+            ...pump,
+            calculatedSavings: parseSavingsFromText(fullResponse, pump.model),
+          }));
+
+          // Send metadata — use fallback suggestions if AI didn't provide any
+          const suggestions = parsed.suggestions ?? getFallbackSuggestions(userMessageCount);
+          if (suggestions || parsed.requirements || pumpCards.length > 0) {
+            controller.enqueue(
+              encoder.encode(
+                `data: ${JSON.stringify({
+                  type: "metadata",
+                  suggestions,
+                  requirements: parsed.requirements,
+                  pumps: pumpCards.length > 0 ? pumpCards : undefined,
+                })}\n\n`
+              )
+            );
           }
 
           controller.enqueue(

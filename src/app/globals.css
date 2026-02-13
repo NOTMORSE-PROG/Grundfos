@@ -94,3 +94,36 @@
     @apply bg-background text-foreground;
   }
 }
+
+/* Compact prose styling for chat messages */
+.prose-sm p {
+  margin-top: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.prose-sm p:first-child {
+  margin-top: 0;
+}
+
+.prose-sm p:last-child {
+  margin-bottom: 0;
+}
+
+.prose-sm ul, .prose-sm ol {
+  margin-top: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.prose-sm li {
+  margin-top: 0.25rem;
+  margin-bottom: 0.25rem;
+}
+
+.prose-sm h1, .prose-sm h2, .prose-sm h3 {
+  margin-top: 0.75rem;
+  margin-bottom: 0.5rem;
+}
+
+.prose-sm h1:first-child, .prose-sm h2:first-child, .prose-sm h3:first-child {
+  margin-top: 0;
+}

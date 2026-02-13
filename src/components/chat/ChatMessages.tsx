@@ -35,8 +35,14 @@ export function ChatMessages({
   return (
     <ScrollArea className="flex-1">
       <div className="max-w-3xl mx-auto px-4 py-6">
-        {messages.map((message) => (
-          <MessageBubble key={message.id} message={message} />
+        {messages.map((message, index) => (
+          <MessageBubble
+            key={message.id}
+            message={message}
+            onSuggestionClick={onPromptClick}
+            isLastMessage={index === messages.length - 1}
+            isStreaming={isStreaming}
+          />
         ))}
 
         {isStreaming &&

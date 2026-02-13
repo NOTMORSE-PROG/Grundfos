@@ -30,8 +30,9 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
-# env files
+# env files (keep .env.example for sharing)
 .env*
+!.env.example
 
 # project docs (not for repo)
 challenge5_strategy.md

@@ -7,7 +7,7 @@ import { ChatMessages } from "@/components/chat/ChatMessages";
 import { ChatInput } from "@/components/chat/ChatInput";
 import { AuthModal } from "@/components/auth/AuthModal";
 import { Button } from "@/components/ui/button";
-import { Menu, Droplets, LogIn, LogOut, User } from "lucide-react";
+import { Menu, Droplets, LogIn, LogOut } from "lucide-react";
 import { getUser, signOut } from "@/lib/auth";
 import type { User as SupabaseUser } from "@supabase/supabase-js";
 
@@ -37,6 +37,8 @@ export default function Home() {
     sidebarOpen,
     addMessage,
     appendToLastMessage,
+    replaceLastMessageContent,
+    updateLastMessageMetadata,
     setIsStreaming,
     setCurrentConversationId,
     setSidebarOpen,
@@ -72,6 +74,9 @@ export default function Home() {
       const controller = new AbortController();
       setAbortController(controller);
 
+      // Count user messages (including the one we just added)
+      const userMsgCount = messages.filter((m) => m.role === "user").length + 1;
+
       try {
         const response = await fetch("/api/chat", {
           method: "POST",
@@ -80,6 +85,7 @@ export default function Home() {
             message: content,
             conversationId: currentConversationId,
             sessionId,
+            userMessageCount: userMsgCount,
           }),
           signal: controller.signal,
         });
@@ -112,6 +118,13 @@ export default function Home() {
                 setCurrentConversationId(data.id);
               } else if (data.type === "token") {
                 appendToLastMessage(data.content);
+              } else if (data.type === "replace_content") {
+                replaceLastMessageContent(data.content);
+              } else if (data.type === "metadata") {
+                updateLastMessageMetadata({
+                  suggestions: data.suggestions,
+                  requirements: data.requirements,
+                });
               } else if (data.type === "done") {
                 // Stream complete
               } else if (data.type === "error") {
@@ -136,18 +149,27 @@ export default function Home() {
       }
     },
     [
+      messages,
       isStreaming,
       currentConversationId,
       sessionId,
       addMessage,
       appendToLastMessage,
+      replaceLastMessageContent,
+      updateLastMessageMetadata,
       setIsStreaming,
       setCurrentConversationId,
     ]
   );
 
   const handlePromptClick = (prompt: string) => {
-    setPendingPrompt(prompt);
+    if (messages.length > 0 && !isStreaming) {
+      // Mid-conversation suggestion click → send immediately
+      sendMessage(prompt);
+    } else {
+      // Empty state prompt click → fill input for user to customize
+      setPendingPrompt(prompt);
+    }
   };
 
   const handleStop = () => {

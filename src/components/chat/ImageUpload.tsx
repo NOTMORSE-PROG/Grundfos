@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef } from "react";
+import Image from "next/image";
 import { Button } from "@/components/ui/button";
 import { Camera, X, Loader2 } from "lucide-react";
 
@@ -109,10 +110,13 @@ export function ImageUpload({ onImageProcessed, disabled }: ImageUploadProps) {
       {preview && (
         <div className="absolute bottom-full mb-2 left-0 bg-card border border-border rounded-lg p-2 shadow-lg">
           <div className="relative">
-            <img
+            <Image
               src={preview}
               alt="Preview"
+              width={96}
+              height={96}
               className="w-24 h-24 object-cover rounded"
+              unoptimized
             />
             {uploading ? (
               <div className="absolute inset-0 bg-black/50 rounded flex items-center justify-center">

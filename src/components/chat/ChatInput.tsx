@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { ArrowUp, Square } from "lucide-react";
@@ -28,12 +28,9 @@ export function ChatInput({
   const [input, setInput] = useState(initialValue || "");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  useEffect(() => {
-    if (initialValue) {
-      setInput(initialValue);
-      textareaRef.current?.focus();
-    }
-  }, [initialValue]);
+  if (initialValue && input !== initialValue) {
+    setInput(initialValue);
+  }
 
   const handleSend = () => {
     const trimmed = input.trim();
