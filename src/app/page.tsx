@@ -1,285 +1,310 @@
 "use client";
 
-import { useState, useCallback, useEffect } from "react";
-import { useChatStore } from "@/lib/chat-store";
-import { ConversationSidebar } from "@/components/sidebar/ConversationSidebar";
-import { ChatMessages } from "@/components/chat/ChatMessages";
-import { ChatInput } from "@/components/chat/ChatInput";
+import { useState } from "react";
+import Link from "next/link";
 import { AuthModal } from "@/components/auth/AuthModal";
 import { Button } from "@/components/ui/button";
-import { Menu, Droplets, LogIn, LogOut } from "lucide-react";
-import { getUser, signOut } from "@/lib/auth";
-import type { User as SupabaseUser } from "@supabase/supabase-js";
+import {
+  Droplets,
+  Globe,
+  Zap,
+  Lightbulb,
+  Waves,
+  Flame,
+  Trash2,
+  Factory,
+  Trees,
+  Bath,
+  Pipette,
+  Settings,
+  MessageSquare,
+  ArrowRight,
+  LogIn,
+} from "lucide-react";
 
-export default function Home() {
-  const [user, setUser] = useState<SupabaseUser | null>(null);
+export default function LandingPage() {
   const [authModalOpen, setAuthModalOpen] = useState(false);
 
-  useEffect(() => {
-    getUser().then(setUser);
-  }, []);
-
-  const handleAuthSuccess = async () => {
-    const u = await getUser();
-    setUser(u);
-  };
-
-  const handleSignOut = async () => {
-    await signOut();
-    setUser(null);
-  };
-
-  const {
-    messages,
-    isStreaming,
-    currentConversationId,
-    sessionId,
-    sidebarOpen,
-    addMessage,
-    appendToLastMessage,
-    replaceLastMessageContent,
-    updateLastMessageMetadata,
-    setIsStreaming,
-    setCurrentConversationId,
-    setSidebarOpen,
-  } = useChatStore();
-
-  const [pendingPrompt, setPendingPrompt] = useState<string>("");
-  const [abortController, setAbortController] =
-    useState<AbortController | null>(null);
-
-  const sendMessage = useCallback(
-    async (content: string) => {
-      if (isStreaming) return;
-
-      // Add user message
-      const userMessage = {
-        id: crypto.randomUUID(),
-        role: "user" as const,
-        content,
-        created_at: new Date().toISOString(),
-      };
-      addMessage(userMessage);
-
-      // Add empty assistant message
-      const assistantMessage = {
-        id: crypto.randomUUID(),
-        role: "assistant" as const,
-        content: "",
-        created_at: new Date().toISOString(),
-      };
-      addMessage(assistantMessage);
-
-      setIsStreaming(true);
-      const controller = new AbortController();
-      setAbortController(controller);
-
-      // Count user messages (including the one we just added)
-      const userMsgCount = messages.filter((m) => m.role === "user").length + 1;
-
-      try {
-        const response = await fetch("/api/chat", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            message: content,
-            conversationId: currentConversationId,
-            sessionId,
-            userMessageCount: userMsgCount,
-          }),
-          signal: controller.signal,
-        });
-
-        if (!response.ok) {
-          throw new Error("Failed to send message");
-        }
-
-        const reader = response.body?.getReader();
-        if (!reader) throw new Error("No reader available");
-
-        const decoder = new TextDecoder();
-
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-
-          const text = decoder.decode(value, { stream: true });
-          const lines = text.split("\n");
-
-          for (const line of lines) {
-            if (!line.startsWith("data: ")) continue;
-            const jsonStr = line.slice(6).trim();
-            if (!jsonStr) continue;
-
-            try {
-              const data = JSON.parse(jsonStr);
-
-              if (data.type === "conversation_id") {
-                setCurrentConversationId(data.id);
-              } else if (data.type === "token") {
-                appendToLastMessage(data.content);
-              } else if (data.type === "replace_content") {
-                replaceLastMessageContent(data.content);
-              } else if (data.type === "metadata") {
-                updateLastMessageMetadata({
-                  suggestions: data.suggestions,
-                  requirements: data.requirements,
-                });
-              } else if (data.type === "done") {
-                // Stream complete
-              } else if (data.type === "error") {
-                appendToLastMessage(
-                  "\n\n*Error: " + data.message + "*"
-                );
-              }
-            } catch {
-              // Parse error, skip
-            }
-          }
-        }
-      } catch (error) {
-        if ((error as Error).name !== "AbortError") {
-          appendToLastMessage(
-            "\n\n*Sorry, an error occurred. Please try again.*"
-          );
-        }
-      } finally {
-        setIsStreaming(false);
-        setAbortController(null);
-      }
-    },
-    [
-      messages,
-      isStreaming,
-      currentConversationId,
-      sessionId,
-      addMessage,
-      appendToLastMessage,
-      replaceLastMessageContent,
-      updateLastMessageMetadata,
-      setIsStreaming,
-      setCurrentConversationId,
-    ]
-  );
-
-  const handlePromptClick = (prompt: string) => {
-    if (messages.length > 0 && !isStreaming) {
-      // Mid-conversation suggestion click → send immediately
-      sendMessage(prompt);
-    } else {
-      // Empty state prompt click → fill input for user to customize
-      setPendingPrompt(prompt);
-    }
-  };
-
-  const handleStop = () => {
-    abortController?.abort();
-    setIsStreaming(false);
-  };
-
-  const handleImageProcessed = (result: {
-    imageUrl: string;
-    ocrText: string;
-    parsedInfo: Record<string, string | null>;
-  }) => {
-    // Build a message with OCR results to send to the chat
-    const parts: string[] = ["I uploaded a pump nameplate photo."];
-
-    if (result.parsedInfo.brand) parts.push(`Brand: ${result.parsedInfo.brand}`);
-    if (result.parsedInfo.model) parts.push(`Model: ${result.parsedInfo.model}`);
-    if (result.parsedInfo.power) parts.push(`Power: ${result.parsedInfo.power}`);
-    if (result.parsedInfo.voltage) parts.push(`Voltage: ${result.parsedInfo.voltage}`);
-    if (result.parsedInfo.flow) parts.push(`Flow: ${result.parsedInfo.flow}`);
-    if (result.parsedInfo.head) parts.push(`Head: ${result.parsedInfo.head}`);
-
-    if (parts.length === 1) {
-      parts.push(`OCR extracted text: "${result.ocrText.slice(0, 300)}"`);
-    }
-
-    parts.push("Please identify this pump and recommend a Grundfos replacement with energy savings analysis.");
-
-    sendMessage(parts.join("\n"));
-  };
-
   return (
-    <div className="flex h-screen overflow-hidden">
-      {/* Sidebar */}
-      <ConversationSidebar />
-
-      {/* Main chat area */}
-      <main className="flex-1 flex flex-col min-w-0">
-        {/* Header */}
-        <header className="flex items-center gap-3 px-4 py-3 border-b border-border bg-background">
+    <div className="min-h-screen bg-white">
+      {/* Navigation */}
+      <nav className="flex items-center justify-between px-6 md:px-12 py-4 bg-white border-b border-gray-100">
+        <div className="flex items-center gap-2">
+          <Droplets className="w-6 h-6 text-grundfos-blue" />
+          <span className="font-bold text-xl text-grundfos-dark">
+            GrundMatch
+          </span>
+        </div>
+        <div className="flex items-center gap-3">
           <Button
-            variant="ghost"
-            size="icon"
-            className="lg:hidden h-8 w-8"
-            onClick={() => setSidebarOpen(!sidebarOpen)}
+            variant="outline"
+            size="sm"
+            className="border-grundfos-blue/30 text-grundfos-blue hover:bg-grundfos-light"
+            onClick={() => setAuthModalOpen(true)}
           >
-            <Menu className="h-5 w-5" />
+            <LogIn className="h-4 w-4 mr-1.5" />
+            Sign In
           </Button>
+          <Link href="/chat">
+            <Button
+              size="sm"
+              className="bg-grundfos-blue hover:bg-grundfos-dark text-white"
+            >
+              <MessageSquare className="h-4 w-4 mr-1.5" />
+              Try Now
+            </Button>
+          </Link>
+        </div>
+      </nav>
 
-          <div className="flex items-center gap-2">
-            <Droplets className="w-5 h-5 text-grundfos-blue" />
-            <h1 className="font-semibold text-grundfos-dark text-sm">
-              GrundMatch
-            </h1>
-          </div>
-
-          <div className="flex items-center gap-2 ml-auto">
-            <span className="text-xs text-muted-foreground hidden sm:block">
-              AI Pump Advisor
-            </span>
-            {user ? (
-              <div className="flex items-center gap-2">
-                <span className="text-xs text-muted-foreground hidden sm:block">
-                  {user.email}
-                </span>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-8 w-8"
-                  onClick={handleSignOut}
-                >
-                  <LogOut className="h-4 w-4" />
-                </Button>
-              </div>
-            ) : (
+      {/* Hero Section */}
+      <section className="bg-gradient-to-br from-grundfos-dark via-grundfos-blue to-grundfos-mid text-white py-20 md:py-28">
+        <div className="max-w-5xl mx-auto px-6 text-center">
+          <span className="inline-block bg-white/15 text-white text-xs font-semibold uppercase tracking-wider px-4 py-1.5 rounded-full mb-6">
+            About GrundMatch
+          </span>
+          <h1 className="text-3xl md:text-5xl font-bold leading-tight mb-6">
+            Leading the Way in
+            <br />
+            Pump Solutions
+          </h1>
+          <p className="text-white/75 max-w-2xl mx-auto mb-10 text-sm md:text-base leading-relaxed">
+            For over 75 years, Grundfos has been at the forefront of pump
+            technology, innovation, and sustainable solutions worldwide.
+            GrundMatch uses AI to help you find the perfect pump instantly.
+          </p>
+          <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
+            <Link href="/chat">
               <Button
-                variant="outline"
-                size="sm"
-                className="h-8 text-xs border-grundfos-blue/30 text-grundfos-blue hover:bg-grundfos-light"
-                onClick={() => setAuthModalOpen(true)}
+                size="lg"
+                className="bg-white text-grundfos-dark hover:bg-grundfos-light font-semibold px-8"
               >
-                <LogIn className="h-3.5 w-3.5 mr-1.5" />
-                Sign in
+                <MessageSquare className="h-5 w-5 mr-2" />
+                Chat Without Signing In
               </Button>
-            )}
+            </Link>
+            <Button
+              size="lg"
+              variant="outline"
+              className="border-white/40 text-white hover:bg-white/10 font-semibold px-8"
+              onClick={() => setAuthModalOpen(true)}
+            >
+              <LogIn className="h-5 w-5 mr-2" />
+              Sign Up / Log In
+            </Button>
           </div>
-        </header>
+        </div>
+      </section>
 
-        <AuthModal
-          open={authModalOpen}
-          onOpenChange={setAuthModalOpen}
-          onAuthSuccess={handleAuthSuccess}
-        />
+      {/* Features Row */}
+      <section className="py-16 bg-gray-50">
+        <div className="max-w-5xl mx-auto px-6 grid grid-cols-1 md:grid-cols-3 gap-8">
+          {[
+            {
+              icon: Globe,
+              title: "Global Presence",
+              desc: "Operating in more than 56 countries with production facilities worldwide, ensuring local support and global expertise.",
+            },
+            {
+              icon: Zap,
+              title: "Energy Efficient",
+              desc: "Our pumps are designed with sustainability in mind, reducing energy consumption and environmental impact.",
+            },
+            {
+              icon: Lightbulb,
+              title: "Innovation Leader",
+              desc: "Continuous research and development brings cutting-edge technology and superior performance to our products.",
+            },
+          ].map((f) => (
+            <div
+              key={f.title}
+              className="bg-white rounded-xl p-6 text-center shadow-sm border border-gray-100"
+            >
+              <div className="w-14 h-14 mx-auto mb-4 rounded-full bg-grundfos-light flex items-center justify-center">
+                <f.icon className="w-7 h-7 text-grundfos-blue" />
+              </div>
+              <h3 className="font-semibold text-grundfos-dark mb-2">
+                {f.title}
+              </h3>
+              <p className="text-sm text-muted-foreground leading-relaxed">
+                {f.desc}
+              </p>
+            </div>
+          ))}
+        </div>
+      </section>
 
-        {/* Messages */}
-        <ChatMessages
-          messages={messages}
-          isStreaming={isStreaming}
-          onPromptClick={handlePromptClick}
-        />
+      {/* Product Categories */}
+      <section className="py-16">
+        <div className="max-w-5xl mx-auto px-6 text-center">
+          <span className="inline-block bg-grundfos-light text-grundfos-blue text-xs font-semibold uppercase tracking-wider px-4 py-1.5 rounded-full mb-4">
+            Our Products
+          </span>
+          <h2 className="text-2xl md:text-3xl font-bold text-grundfos-dark mb-2">
+            Comprehensive Pump Solutions
+          </h2>
+          <p className="text-muted-foreground text-sm mb-10">
+            We have the right pump for every need.
+          </p>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            {[
+              { icon: Waves, label: "Water Supply" },
+              { icon: Flame, label: "Heating Systems" },
+              { icon: Trash2, label: "Waste Water" },
+              { icon: Factory, label: "Industrial" },
+              { icon: Trees, label: "Irrigation" },
+              { icon: Bath, label: "Pool & Spa" },
+              { icon: Pipette, label: "Dosing Pumps" },
+              { icon: Settings, label: "Custom Solutions" },
+            ].map((p) => (
+              <div
+                key={p.label}
+                className="bg-grundfos-dark rounded-xl p-5 flex flex-col items-center gap-3 hover:bg-grundfos-blue transition-colors cursor-pointer"
+              >
+                <p.icon className="w-8 h-8 text-white" />
+                <span className="text-white text-sm font-medium">
+                  {p.label}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
 
-        {/* Input */}
-        <ChatInput
-          onSend={sendMessage}
-          isStreaming={isStreaming}
-          onStop={handleStop}
-          initialValue={pendingPrompt}
-          onImageProcessed={handleImageProcessed}
-        />
-      </main>
+      {/* Excellence Section */}
+      <section className="py-16 bg-gray-50">
+        <div className="max-w-5xl mx-auto px-6 text-center">
+          <span className="inline-block bg-grundfos-light text-grundfos-blue text-xs font-semibold uppercase tracking-wider px-4 py-1.5 rounded-full mb-4">
+            Why Choose GrundMatch
+          </span>
+          <h2 className="text-2xl md:text-3xl font-bold text-grundfos-dark mb-2">
+            Excellence in Every Detail
+          </h2>
+          <p className="text-muted-foreground text-sm mb-10">
+            We don&apos;t just sell pumps — we provide complete solutions backed
+            by expertise and support.
+          </p>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-left">
+            {[
+              {
+                num: 1,
+                title: "Expert Consultation",
+                desc: "Our AI assistant and certified experts help you select the right pump for your specific needs, ensuring optimal performance and efficiency.",
+              },
+              {
+                num: 2,
+                title: "24/7 Support",
+                desc: "Access our AI pump advisor anytime. Get instant answers to your questions and expert guidance when you need it.",
+              },
+              {
+                num: 3,
+                title: "Quality Assurance",
+                desc: "Every Grundfos pump undergoes rigorous testing and quality control, guaranteeing reliability and long service life.",
+              },
+              {
+                num: 4,
+                title: "Sustainable Solutions",
+                desc: "We help you find energy-efficient pumps that reduce costs and your environmental footprint.",
+              },
+            ].map((item) => (
+              <div
+                key={item.num}
+                className="flex gap-4 bg-white rounded-xl p-5 shadow-sm border border-gray-100"
+              >
+                <div className="w-10 h-10 shrink-0 rounded-full bg-grundfos-blue text-white flex items-center justify-center font-bold text-sm">
+                  {item.num}
+                </div>
+                <div>
+                  <h3 className="font-semibold text-grundfos-dark mb-1">
+                    {item.title}
+                  </h3>
+                  <p className="text-sm text-muted-foreground leading-relaxed">
+                    {item.desc}
+                  </p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* CTA Section */}
+      <section className="py-16 bg-gradient-to-r from-grundfos-dark to-grundfos-blue text-white">
+        <div className="max-w-3xl mx-auto px-6 text-center">
+          <h2 className="text-2xl md:text-3xl font-bold mb-4">
+            Ready to Find Your Perfect Pump?
+          </h2>
+          <p className="text-white/75 mb-8 text-sm md:text-base">
+            Start a conversation with our AI advisor. No sign-up required — just
+            describe your needs and get instant recommendations.
+          </p>
+          <Link href="/chat">
+            <Button
+              size="lg"
+              className="bg-white text-grundfos-dark hover:bg-grundfos-light font-semibold px-8"
+            >
+              Get Started
+              <ArrowRight className="h-5 w-5 ml-2" />
+            </Button>
+          </Link>
+        </div>
+      </section>
+
+      {/* Footer */}
+      <footer className="bg-grundfos-dark text-white py-12">
+        <div className="max-w-5xl mx-auto px-6">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-8 mb-8">
+            <div>
+              <div className="flex items-center gap-2 mb-4">
+                <Droplets className="w-5 h-5" />
+                <span className="font-bold">GRUNDFOS</span>
+              </div>
+              <p className="text-white/60 text-xs leading-relaxed">
+                Pioneering pump solutions for a sustainable future. Trusted by
+                millions worldwide.
+              </p>
+            </div>
+            <div>
+              <h4 className="font-semibold text-sm mb-3">Products</h4>
+              <ul className="space-y-2 text-white/60 text-xs">
+                <li>Heating</li>
+                <li>Water Supply</li>
+                <li>Waste Water</li>
+              </ul>
+            </div>
+            <div>
+              <h4 className="font-semibold text-sm mb-3">Company</h4>
+              <ul className="space-y-2 text-white/60 text-xs">
+                <li>About</li>
+                <li>Careers</li>
+                <li>Sustainability</li>
+              </ul>
+            </div>
+            <div>
+              <h4 className="font-semibold text-sm mb-3">Support</h4>
+              <ul className="space-y-2 text-white/60 text-xs">
+                <li>Contact</li>
+                <li>FAQ</li>
+                <li>Documentation</li>
+              </ul>
+            </div>
+          </div>
+          <div className="border-t border-white/10 pt-6 text-center text-white/40 text-xs">
+            &copy; 2026 GrundMatch. All rights reserved. | Privacy Policy |
+            Terms of Service
+          </div>
+        </div>
+      </footer>
+
+      {/* Auth Modal */}
+      <AuthModal
+        open={authModalOpen}
+        onOpenChange={setAuthModalOpen}
+        onAuthSuccess={() => {
+          setAuthModalOpen(false);
+          window.location.href = "/chat";
+        }}
+      />
     </div>
   );
 }
