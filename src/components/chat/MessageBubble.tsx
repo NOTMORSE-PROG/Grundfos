@@ -114,9 +114,6 @@ export function MessageBubble({
                   key={(pump.id as string) || index}
                   pump={pump as never}
                   rank={index + 1}
-                  onGenerateReport={() => {
-                    // TODO: wire up PDF generation
-                  }}
                 />
               ))}
 

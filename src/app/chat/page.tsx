@@ -74,8 +74,8 @@ export default function Home() {
       const controller = new AbortController();
       setAbortController(controller);
 
-      // Count user messages (including the one we just added)
-      const userMsgCount = messages.filter((m) => m.role === "user").length + 1;
+      // Build conversation history for the engine (it needs ALL messages for intent extraction)
+      const history = messages.map((m) => ({ role: m.role, content: m.content }));
 
       try {
         const response = await fetch("/api/chat", {
@@ -85,7 +85,7 @@ export default function Home() {
             message: content,
             conversationId: currentConversationId,
             sessionId,
-            userMessageCount: userMsgCount,
+            history,
           }),
           signal: controller.signal,
         });
@@ -124,6 +124,7 @@ export default function Home() {
                 updateLastMessageMetadata({
                   suggestions: data.suggestions,
                   requirements: data.requirements,
+                  pumps: data.pumps,
                 });
               } else if (data.type === "done") {
                 // Stream complete

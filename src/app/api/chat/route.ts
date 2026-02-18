@@ -1,11 +1,10 @@
 import { NextRequest } from "next/server";
 import { getGroqClient } from "@/lib/groq";
-import { SYSTEM_PROMPT, buildContextPrompt, getStepInstruction, getFallbackSuggestions } from "@/lib/prompts";
+import { QUESTION_PROMPT, EXPLANATION_PROMPT, COMPARISON_PROMPT } from "@/lib/prompts";
 import { getServiceClient } from "@/lib/supabase";
-import { generateEmbedding } from "@/lib/embeddings";
+import { extractIntent, getNextAction, type EngineResult, type RecommendedPump, type ConversationState } from "@/lib/recommendation-engine";
 import { parseMessageMetadata } from "@/lib/parse-message-metadata";
-import { matchPumpsFromText, parseSavingsFromText } from "@/lib/match-pumps";
-import pumpCatalog from "@/data/pump-catalog.json";
+import { extractIntentWithLLM } from "@/lib/extract-intent-llm";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -14,94 +13,13 @@ interface ChatRequest {
   message: string;
   conversationId?: string;
   sessionId: string;
-  userMessageCount?: number;
-}
-
-// Fallback: search pumps from local JSON when Supabase isn't configured
-function searchPumpsLocal(query: string): string {
-  const q = query.toLowerCase();
-  const pumps = pumpCatalog.pumps || [];
-
-  const matched = pumps.filter((pump) => {
-    const searchText = [
-      pump.model,
-      pump.family,
-      pump.category,
-      pump.type,
-      ...(pump.applications || []),
-      ...(pump.features || []),
-    ]
-      .join(" ")
-      .toLowerCase();
-    return q
-      .split(" ")
-      .some((word) => word.length > 2 && searchText.includes(word));
-  });
-
-  const results = matched.slice(0, 5);
-  if (results.length === 0) {
-    return pumps
-      .slice(0, 5)
-      .map(
-        (p) =>
-          `${p.model}: ${p.type}, flow ${p.specs?.max_flow_m3h ?? "N/A"}m³/h, head ${p.specs?.max_head_m ?? "N/A"}m, power ${p.specs?.power_kw ?? "N/A"}kW, applications: ${(p.applications || []).join(", ")}, features: ${(p.features || []).slice(0, 3).join(", ")}`
-      )
-      .join("\n");
-  }
-
-  return results
-    .map(
-      (p) =>
-        `${p.model}: ${p.type}, flow ${p.specs?.max_flow_m3h ?? "N/A"}m³/h, head ${p.specs?.max_head_m ?? "N/A"}m, power ${p.specs?.power_kw ?? "N/A"}kW, applications: ${(p.applications || []).join(", ")}, features: ${(p.features || []).slice(0, 3).join(", ")}, price: ${p.price_range_usd ?? "N/A"} USD, annual kWh: ${p.estimated_annual_kwh ?? "N/A"}`
-    )
-    .join("\n");
-}
-
-// Try RAG search via Supabase, fallback to local
-async function getPumpContext(userMessage: string): Promise<string> {
-  try {
-    const supabase = getServiceClient();
-    if (!supabase) return searchPumpsLocal(userMessage);
-
-    const embedding = await generateEmbedding(userMessage);
-
-    const { data, error } = await supabase.rpc("match_pumps", {
-      query_embedding: embedding,
-      match_threshold: 0.3,
-      match_count: 5,
-    });
-
-    if (error || !data || data.length === 0) {
-      return searchPumpsLocal(userMessage);
-    }
-
-    const pumpIds = [
-      ...new Set(data.map((d: { pump_id: string }) => d.pump_id)),
-    ];
-    const { data: pumps } = await supabase
-      .from("pumps")
-      .select("*")
-      .in("id", pumpIds);
-
-    if (!pumps || pumps.length === 0) {
-      return searchPumpsLocal(userMessage);
-    }
-
-    return pumps
-      .map(
-        (p: Record<string, unknown>) =>
-          `${p.model}: ${p.type}, flow ${p.max_flow_m3h}m³/h, head ${p.max_head_m}m, power ${p.power_kw}kW, applications: ${(p.application as string[] || []).join(", ")}, features: ${(p.features as string[] || []).slice(0, 3).join(", ")}, price: $${p.price_range_min}-${p.price_range_max}, annual kWh: ${p.typical_annual_kwh}`
-      )
-      .join("\n");
-  } catch {
-    return searchPumpsLocal(userMessage);
-  }
+  history?: Array<{ role: string; content: string }>;
 }
 
 export async function POST(request: NextRequest) {
   try {
     const body: ChatRequest = await request.json();
-    const { message, conversationId, sessionId, userMessageCount: clientMsgCount } = body;
+    const { message, conversationId, sessionId, history: clientHistory } = body;
 
     if (!message || !sessionId) {
       return new Response(
@@ -112,17 +30,7 @@ export async function POST(request: NextRequest) {
 
     const groq = getGroqClient();
 
-    // Get pump context via RAG or local search
-    const pumpContext = await getPumpContext(message);
-    const contextPrompt = buildContextPrompt(pumpContext);
-
-    // Build messages array (system prompt added after we know the step)
-    const chatMessages: Array<{
-      role: "system" | "user" | "assistant";
-      content: string;
-    }> = [];
-
-    // Load conversation history if exists
+    // ─── Load conversation history ────────────────────────────────
     let currentConversationId = conversationId;
     const supabase = getServiceClient();
     const historyMessages: Array<{ role: string; content: string }> = [];
@@ -135,7 +43,7 @@ export async function POST(request: NextRequest) {
             .select("role, content")
             .eq("conversation_id", currentConversationId)
             .order("created_at", { ascending: true })
-            .limit(20);
+            .limit(50);
 
           if (history) {
             for (const msg of history) {
@@ -165,38 +73,131 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Count user messages — prefer frontend count (always accurate), fallback to history
-    const userMessageCount = clientMsgCount ?? (historyMessages.filter((m) => m.role === "user").length + 1);
+    // ─── Engine: Extract intent from ALL messages ─────────────────
+    // Use Supabase history if available, otherwise use client-provided history
+    const effectiveHistory = historyMessages.length > 0 ? historyMessages : (clientHistory || []);
+    const allMessages = [
+      ...effectiveHistory,
+      { role: "user", content: message },
+    ];
 
-    // Build conversation context string for step instruction
-    const conversationSummary = historyMessages
-      .map((m) => `${m.role}: ${m.content}`)
-      .join("\n");
+    // Run LLM-based intent extraction and regex extraction in parallel
+    // LLM understands natural language, paraphrases, and Filipino/Tagalog
+    // Regex is fast and precise for exact numbers (flow, head, power)
+    const [llmIntent, regexState] = await Promise.all([
+      extractIntentWithLLM(groq, allMessages),
+      Promise.resolve(extractIntent(allMessages)),
+    ]);
 
-    // Inject step-aware system prompt
-    const stepInstruction = getStepInstruction(userMessageCount, conversationSummary);
-    chatMessages.push({
-      role: "system",
-      content: SYSTEM_PROMPT + contextPrompt + "\n" + stepInstruction,
-    });
+    // Merge: regex wins where it found something (reliable for exact specs)
+    // LLM fills gaps where regex found nothing (handles natural language)
+    const state: ConversationState = {
+      ...regexState,
+      ...(llmIntent.application && !regexState.application && { application: llmIntent.application }),
+      ...(llmIntent.buildingSize && !regexState.buildingSize && { buildingSize: llmIntent.buildingSize }),
+      ...(llmIntent.floors != null && !regexState.floors && { floors: llmIntent.floors }),
+      ...(llmIntent.bathrooms != null && !regexState.bathrooms && { bathrooms: llmIntent.bathrooms }),
+      ...(llmIntent.waterSource && !regexState.waterSource && { waterSource: llmIntent.waterSource }),
+      ...(llmIntent.flow_m3h != null && !regexState.flow_m3h && { flow_m3h: llmIntent.flow_m3h }),
+      ...(llmIntent.head_m != null && !regexState.head_m && { head_m: llmIntent.head_m }),
+      ...(llmIntent.existingPumpBrand && !regexState.existingPumpBrand && { existingPumpBrand: llmIntent.existingPumpBrand }),
+      ...(llmIntent.existingPump && !regexState.existingPump && { existingPump: llmIntent.existingPump }),
+      ...(llmIntent.problem && !regexState.problem && { problem: llmIntent.problem }),
+    };
 
-    // Add history
-    for (const msg of historyMessages) {
-      chatMessages.push({
-        role: msg.role as "user" | "assistant",
-        content: msg.content,
-      });
+    let engineResult: EngineResult = getNextAction(state, message);
+
+    // Handle 0 pump matches — fall back to asking for more info
+    if (
+      engineResult.action === "recommend" &&
+      (!engineResult.pumps || engineResult.pumps.length === 0)
+    ) {
+      engineResult = {
+        action: "ask",
+        questionContext:
+          "No exact pump matches found for their specs. Ask if they can adjust their requirements, or suggest they consult a Grundfos engineer for a custom solution.",
+        suggestions: ["Adjust my specs", "Talk to an engineer"],
+        state,
+      };
     }
 
-    chatMessages.push({ role: "user", content: message });
+    // ─── Build LLM messages based on engine decision ──────────────
+    const chatMessages: Array<{
+      role: "system" | "user" | "assistant";
+      content: string;
+    }> = [];
 
-    // Stream response from Groq
+    if (engineResult.action === "ask" || engineResult.action === "greet") {
+      // Build context about what we already know
+      const knownContext: string[] = [];
+      if (state.application) knownContext.push(`application: ${state.application.replace(/_/g, " ")}`);
+      if (state.buildingSize) knownContext.push(`building: ${state.buildingSize}`);
+      if (state.existingPumpBrand) knownContext.push(`current pump: ${state.existingPumpBrand}${state.existingPump ? " " + state.existingPump : ""}`);
+      if (state.flow_m3h) knownContext.push(`flow: ${state.flow_m3h} m³/h`);
+      if (state.head_m) knownContext.push(`head: ${state.head_m} m`);
+      if (state.waterSource) knownContext.push(`water source: ${state.waterSource}`);
+      if (state.bathrooms) knownContext.push(`bathrooms: ${state.bathrooms}`);
+      if (state.floors) knownContext.push(`floors: ${state.floors}`);
+
+      chatMessages.push({
+        role: "system",
+        content: `${QUESTION_PROMPT}\n\nYou already know: ${knownContext.length > 0 ? knownContext.join(", ") : "nothing yet"}.\nYour task: ${engineResult.questionContext}`,
+      });
+      // Include history for conversational continuity
+      for (const msg of effectiveHistory) {
+        chatMessages.push({
+          role: msg.role as "user" | "assistant",
+          content: msg.content,
+        });
+      }
+      chatMessages.push({ role: "user", content: message });
+    } else {
+      // Recommendation mode: choose prompt based on whether it's competitor replacement
+      const isCompetitor = engineResult.isCompetitorReplacement;
+      const basePrompt = isCompetitor ? COMPARISON_PROMPT : EXPLANATION_PROMPT;
+
+      const topPump = engineResult.pumps?.[0];
+      const savings = topPump
+        ? `₱${Math.round(topPump.roi.annual_savings).toLocaleString()}/year`
+        : "significant";
+      const monthlySavings = topPump
+        ? `₱${Math.round(topPump.roi.annual_savings / 12).toLocaleString()}/month`
+        : "";
+      const pumpNames = engineResult.pumps?.map((p) => p.model).join(" and ") || "matched pumps";
+      const app = state.application?.replace(/_/g, " ") || "their system";
+      const confidence = topPump?.matchConfidence ? `${topPump.matchConfidence}% match` : "";
+
+      const competitorContext = isCompetitor && topPump?.comparedTo
+        ? `\nTheir current pump: ${topPump.comparedTo}. This is a direct Grundfos equivalent.`
+        : "";
+
+      chatMessages.push({
+        role: "system",
+        content: `${basePrompt}
+
+Context: The user needs a pump for their ${app} system.
+You are recommending: ${pumpNames}. ${confidence ? `(${confidence})` : ""}
+The top pick saves approximately ${savings} (${monthlySavings}) in energy costs.${competitorContext}
+${topPump?.oversizingNote || ""}
+The detailed specs and ROI are shown in cards below — just write a warm, natural explanation.`,
+      });
+      // Include history so LLM has conversational context
+      for (const msg of effectiveHistory) {
+        chatMessages.push({
+          role: msg.role as "user" | "assistant",
+          content: msg.content,
+        });
+      }
+      chatMessages.push({ role: "user", content: message });
+    }
+
+    // ─── Stream LLM response ─────────────────────────────────────
     const chatStream = await groq.chat.completions.create({
       model: "llama-3.1-8b-instant",
       messages: chatMessages,
       stream: true,
-      temperature: 0.7,
-      max_tokens: 2048,
+      temperature: engineResult.action === "recommend" ? 0.6 : 0.7,
+      max_tokens: engineResult.action === "recommend" ? 200 : engineResult.action === "greet" ? 80 : 80,
     });
 
     const encoder = new TextEncoder();
@@ -225,10 +226,8 @@ export async function POST(request: NextRequest) {
             }
           }
 
-          // Parse metadata from response
+          // Strip any accidental markers the LLM might output
           const parsed = parseMessageMetadata(fullResponse);
-
-          // Send clean content to replace the one with markers
           if (parsed.content !== fullResponse) {
             controller.enqueue(
               encoder.encode(
@@ -248,8 +247,9 @@ export async function POST(request: NextRequest) {
                 role: "assistant",
                 content: parsed.content,
                 metadata: {
-                  suggestions: parsed.suggestions,
-                  requirements: parsed.requirements,
+                  engineAction: engineResult.action,
+                  suggestions: engineResult.suggestions,
+                  requirements: engineResult.requirements,
                 },
               });
 
@@ -284,24 +284,43 @@ export async function POST(request: NextRequest) {
             }
           }
 
-          // Match pump models from AI response to catalog
-          const matchedPumps = matchPumpsFromText(fullResponse);
-          const pumpCards = matchedPumps.map((pump) => ({
-            ...pump,
-            calculatedSavings: parseSavingsFromText(fullResponse, pump.model),
-          }));
+          // ─── Send engine-calculated metadata ────────────────────
+          const metadata: Record<string, unknown> = {};
 
-          // Send metadata — use fallback suggestions if AI didn't provide any
-          const suggestions = parsed.suggestions ?? getFallbackSuggestions(userMessageCount);
-          if (suggestions || parsed.requirements || pumpCards.length > 0) {
+          if (engineResult.suggestions) {
+            metadata.suggestions = engineResult.suggestions;
+          }
+
+          if (engineResult.requirements) {
+            metadata.requirements = engineResult.requirements;
+          }
+
+          if (engineResult.pumps && engineResult.pumps.length > 0) {
+            metadata.pumps = engineResult.pumps.map((pump: RecommendedPump) => ({
+              id: pump.id,
+              model: pump.model,
+              family: pump.family,
+              category: pump.category,
+              type: pump.type,
+              image_url: pump.image_url,
+              applications: pump.applications,
+              features: pump.features,
+              specs: pump.specs,
+              estimated_annual_kwh: pump.estimated_annual_kwh,
+              price_range_usd: pump.price_range_usd,
+              price_range_php: pump.price_range_php,
+              roi: pump.roi,
+              oversizingNote: pump.oversizingNote,
+              matchConfidence: pump.matchConfidence,
+              matchLabel: pump.matchLabel,
+              comparedTo: pump.comparedTo,
+            }));
+          }
+
+          if (Object.keys(metadata).length > 0) {
             controller.enqueue(
               encoder.encode(
-                `data: ${JSON.stringify({
-                  type: "metadata",
-                  suggestions,
-                  requirements: parsed.requirements,
-                  pumps: pumpCards.length > 0 ? pumpCards : undefined,
-                })}\n\n`
+                `data: ${JSON.stringify({ type: "metadata", ...metadata })}\n\n`
               )
             );
           }
