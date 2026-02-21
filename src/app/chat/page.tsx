@@ -77,6 +77,11 @@ export default function Home() {
       // Build conversation history for the engine (it needs ALL messages for intent extraction)
       const history = messages.map((m) => ({ role: m.role, content: m.content }));
 
+      // For guests (no Supabase): send the last assistant message's engineAction
+      // so the server knows if we just showed a recommendation
+      const lastAssistantMsg = [...messages].reverse().find((m) => m.role === "assistant");
+      const lastEngineAction = lastAssistantMsg?.metadata?.engineAction as string | undefined;
+
       try {
         const response = await fetch("/api/chat", {
           method: "POST",
@@ -86,6 +91,7 @@ export default function Home() {
             conversationId: currentConversationId,
             sessionId,
             history,
+            lastEngineAction,
           }),
           signal: controller.signal,
         });
@@ -125,6 +131,7 @@ export default function Home() {
                   suggestions: data.suggestions,
                   requirements: data.requirements,
                   pumps: data.pumps,
+                  engineAction: data.engineAction,
                 });
               } else if (data.type === "done") {
                 // Stream complete

@@ -37,6 +37,7 @@ export interface CatalogPump {
   category: string;
   type: string;
   image_url?: string;
+  pdf_url?: string;
   applications: string[];
   features: string[];
   specs: Record<string, unknown>;
@@ -87,8 +88,10 @@ const APP_PATTERNS: Array<{ app: Application; pattern: RegExp }> = [
   { app: "cooling", pattern: /\b(cool(?:ing)?|chiller|air[\s-]?condition(?:ing|er)?|ac\b|refrigerat|ventilat)/i },
   { app: "cooling", pattern: /\b(too\s+hot|overheat(?:ing)?|summer|swelter|humid)\b/i },
   // Water supply (broad — buildings, commercial, industrial, agriculture)
-  { app: "water_supply", pattern: /\b(water[\s-]?supply|pressure[\s-]?boost(?:ing)?|municipal|irrigat|borehole|well[\s-]?pump|boosting|building[\s-]?water|fire[\s-]?(?:protect|fight|suppress))\b/i },
-  { app: "water_supply", pattern: /\b(low[\s-]?(?:water\s+)?pressure|no[\s-]?water|weak[\s-]?flow|water[\s-]?tower)\b/i },
+  // NOTE: "no water", "low pressure", "weak flow" are PROBLEM types (captured in PROBLEM_PATTERNS),
+  // not application types. Listing them here causes domestic-water situations ("my home has no water")
+  // to wrongly score as water_supply, skipping the domestic_water question gates.
+  { app: "water_supply", pattern: /\b(water[\s-]?supply|pressure[\s-]?boost(?:ing)?|municipal|irrigat|borehole|well[\s-]?pump|boosting|building[\s-]?water|water[\s-]?tower|fire[\s-]?(?:protect|fight|suppress))\b/i },
   // Note: building type words (office, hotel, factory) removed — LLM handles these contextually
   // Domestic water
   { app: "domestic_water", pattern: /\b(domestic|household|home\b|house\b|residential|tap[\s-]?water|hot[\s-]?water|shower|faucet|bathroom|kitchen|condo\b|flat\b|my[\s-]?(?:house|home|place|apartment|condo|flat))\b/i },
@@ -152,13 +155,17 @@ const PROBLEM_PATTERNS: Array<{ problem: Problem; pattern: RegExp }> = [
 // ─── Family Preference Scoring (NOT hard blocks) ────────────────────
 // Preferred families get a scoring bonus. Non-preferred families still compete.
 
+// Catalog contains exactly the 21 eval-kit pumps (see challenge5_eval_kit/).
+// SCALA2, Hydro MPC-E, SEG, SE removed — not in the provided dataset.
 const FAMILY_PREFERENCE: Partial<Record<Application, Record<string, number>>> = {
-  domestic_water: { SCALA: 15, ALPHA: 10 },
+  domestic_water: { SQE: 20, SQ: 12, SP: 8 },   // well/borehole pumps for domestic water
   heating:        { MAGNA3: 15, MAGNA1: 12, TP: 10, ALPHA2: 8, ALPHA1: 7, UPM3: 8, UPM2: 6, UP: 5 },
   cooling:        { MAGNA3: 15, MAGNA1: 12, TP: 10, ALPHA2: 8 },
-  water_supply:   { CR: 15, CM: 12, SP: 12, SCALA: 8, HYDRO: 10, MTH: 8 },
-  wastewater:     { SEG: 15, SE: 15 },
-  dosing:         { DDA: 15 },
+  water_supply:   { CR: 15, CM: 12, SP: 12 },
+  // MTH intentionally omitted from water_supply — industrial coolant, only via DOMAIN_PREFERENCE["IN"].
+  // SEG/SE omitted — not in eval kit.
+  wastewater:     {},
+  dosing:         {},
 };
 
 // ─── Domain-Aware Preferences (eval domains override/supplement FAMILY_PREFERENCE) ──
@@ -409,10 +416,10 @@ function getInfoQuality(state: ConversationState): number {
   let score = 0;
   if (state.application) score += 3;
   if (state.buildingSize) score += 2;
-  if (state.floors) score += 2;      // Raised from 1 — directly sets pump head
-  if (state.bathrooms) score += 2;   // Raised from 1 — directly sets pump flow
+  if (state.floors) score += 3;      // Critical for head calculation — most valuable sizing input
+  if (state.bathrooms) score += 2;   // Directly sizes flow rate
   if (state.waterSource) score += 1;
-  if (state.problem) score += 2;     // Problem type adds important context
+  if (state.problem) score += 1;     // Context, not sizing — problem alone shouldn't trigger recommend
   return score;
 }
 
@@ -421,7 +428,32 @@ function getInfoQuality(state: ConversationState): number {
 const SIZE_TO_FLOORS: Record<BuildingSize, number> = { small: 2, medium: 5, large: 12 };
 const SIZE_TO_UNITS: Record<BuildingSize, number> = { small: 4, medium: 30, large: 100 };
 
-export function getNextAction(state: ConversationState, latestMessage?: string): EngineResult {
+export function getNextAction(
+  state: ConversationState,
+  latestMessage?: string,
+  lastEngineAction?: "recommend" | "ask" | "greet"
+): EngineResult {
+  // ─── Post-recommendation feedback handling ─────────────────────
+  // If last turn was a recommendation and the user's message has no new extractable
+  // pump info, treat it as conversational feedback rather than re-recommending the same pumps.
+  if (lastEngineAction === "recommend" && latestMessage) {
+    const hasNewInfo =
+      /\d+\s*(?:floor|stor|m[³3]\/h|m\s+head|bathroom|kw|gpm|lpm|lps)\b/i.test(latestMessage) ||
+      /\b(heating|cooling|wastewater|dosing|water[\s-]supply|boiler|chiller|irrigat|borehole|well[\s-]pump)\b/i.test(latestMessage) ||
+      /\b(wilo|ksb|xylem|lowara|dab|pedrollo|ebara|flygt|grundfos)\b/i.test(latestMessage);
+
+    if (!hasNewInfo) {
+      return {
+        action: "ask",
+        questionContext:
+          "The user just saw pump recommendations and replied with feedback or a comment (e.g. 'doesn't look good', 'too expensive', 'not what I need'). Ask what specifically they want changed — price, pump type, performance specs, or see alternatives? Keep it conversational.",
+        suggestions: ["Too expensive", "Wrong pump type", "Need different specs", "Show more options"],
+        state,
+      };
+    }
+    // Has new info → fall through so the engine re-recommends with updated state
+  }
+
   // ─── Greeting ─────────────────────────────────────────────────
   if (latestMessage && GREETING_PATTERN.test(latestMessage) && !state.application && !state.flow_m3h && !state.existingPumpBrand) {
     return {
@@ -451,12 +483,11 @@ export function getNextAction(state: ConversationState, latestMessage?: string):
   // ─── Adaptive question flow based on info quality ─────────────
   const quality = getInfoQuality(state);
 
-  // Enough info → recommend (threshold raised from 5 → 7)
-  if (quality >= 7) {
-    // Hard gate: domestic_water MUST have physical dimensions before recommending.
+  // Enough info → recommend (threshold: 8 requires at least app + floors, or app + buildingSize + bathrooms)
+  if (quality >= 8) {
+    // ── Mandatory gate: domestic_water needs physical dimensions ──────────────
     if (state.application === "domestic_water" && !state.floors && !state.bathrooms) {
       if (state.problem === "replacement" && !state.existingPumpBrand) {
-        // Replacing a pump but we don't know what it does yet — ask usage first
         return {
           action: "ask",
           questionContext: "They want to replace a pump but haven't said what it's used for. Ask what the pump does — water pressure at home, heating/cooling system, or a borehole/well pump?",
@@ -479,6 +510,50 @@ export function getNextAction(state: ConversationState, latestMessage?: string):
         state,
       };
     }
+
+    // ── Mandatory gate: domestic_water needs water source (critical for pump type) ─
+    // Without waterSource we can't distinguish mains booster (SCALA2) from borehole (SP).
+    if (
+      state.application === "domestic_water" &&
+      !state.waterSource &&
+      state.flow_m3h == null
+    ) {
+      return {
+        action: "ask",
+        questionContext: "Ask where their home water comes from — city/tap water (mains), a rooftop or ground storage tank, or a deep well/borehole? This decides which type of pump to recommend.",
+        suggestions: ["City / tap water", "Storage tank", "Deep well / borehole"],
+        state,
+      };
+    }
+
+    // ── Mandatory gate: water_supply needs floors for head calculation ──────────
+    if (
+      state.application === "water_supply" &&
+      !state.floors &&
+      state.flow_m3h == null
+    ) {
+      return {
+        action: "ask",
+        questionContext: "Ask how many floors the building has — this is needed to calculate the water pressure (head) the pump must deliver.",
+        suggestions: ["1-3 floors", "4-8 floors", "9-15 floors", "I know the flow rate"],
+        state,
+      };
+    }
+
+    // ── Mandatory gate: heating / cooling needs floors for loop head calc ───────
+    if (
+      (state.application === "heating" || state.application === "cooling") &&
+      !state.floors &&
+      state.flow_m3h == null
+    ) {
+      return {
+        action: "ask",
+        questionContext: "Ask how many floors the building has — needed to calculate the correct pump head for the heating/cooling loop.",
+        suggestions: ["1-3 floors", "4-6 floors", "7-10 floors", "10+ floors"],
+        state,
+      };
+    }
+
     return buildRecommendation(state);
   }
 
@@ -531,6 +606,15 @@ export function getNextAction(state: ConversationState, latestMessage?: string):
         state,
       };
     }
+    // Have building size but no floors yet — floors are critical for head calculation
+    if (!state.floors && state.flow_m3h == null) {
+      return {
+        action: "ask",
+        questionContext: "Ask how many floors the building or facility has — this determines the water pressure the pump must deliver.",
+        suggestions: ["1-3 floors", "4-8 floors", "9-15 floors", "I know the flow rate"],
+        state,
+      };
+    }
   }
 
   if (state.application === "heating" || state.application === "cooling") {
@@ -538,6 +622,15 @@ export function getNextAction(state: ConversationState, latestMessage?: string):
       return {
         action: "ask",
         questionContext: "Ask how many floors the building has — this is critical for calculating the pump head for the heating/cooling loop.",
+        suggestions: ["1-3 floors", "4-6 floors", "7-10 floors", "10+ floors"],
+        state,
+      };
+    }
+    // Have building size but still no floor count — ask for precision
+    if (!state.floors) {
+      return {
+        action: "ask",
+        questionContext: "Ask how many floors the building has for the heating/cooling system — needed to size the pump correctly.",
         suggestions: ["1-3 floors", "4-6 floors", "7-10 floors", "10+ floors"],
         state,
       };
@@ -558,6 +651,16 @@ export function getNextAction(state: ConversationState, latestMessage?: string):
       action: "ask",
       questionContext: "Ask about the dosing application — what chemical or substance they're dosing, and at what scale.",
       suggestions: ["Chlorination", "pH adjustment", "Water treatment", "I know the flow rate"],
+      state,
+    };
+  }
+
+  // No useful information at all — ask an open question instead of attempting a recommendation
+  if (!state.application && !state.flow_m3h && !state.motor_kw && !state.existingPumpBrand) {
+    return {
+      action: "ask",
+      questionContext: "We have no information yet about what the user needs. Ask what kind of pump system or water problem they need help with — keep it open and welcoming.",
+      suggestions: ["Water pressure at home", "Heating / cooling system", "Replace an old pump", "Industrial or commercial"],
       state,
     };
   }
@@ -620,15 +723,21 @@ function matchPumpsByDutyPoint(
   const preferences = evalDomain
     ? { ...appPrefs, ...domainPrefs }
     : appPrefs;
-  // Water source bonus: if "well", boost SP family
+  // Water source bonus: if "well", boost borehole families
   const waterSourceBonus: Record<string, number> = {};
-  if (waterSource === "well") waterSourceBonus["SP"] = 8;
+  if (waterSource === "well") {
+    waterSourceBonus["SQE"] = 12;  // SQE = variable-speed domestic well pump (best match)
+    waterSourceBonus["SQ"] = 8;
+    waterSourceBonus["SP"] = 6;
+  }
 
-  // Families that require special physical infrastructure or are wrong pump type for domestic water
+  // Families excluded from domestic_water when waterSource !== "well" (mains/tank)
   // MAGNA3/ALPHA3: wet-rotor circulators for HVAC heating/cooling loops — NOT pressure boosters
-  // CR/CRE: require 3-phase 400V (not in homes); NB/NK: industrial flanged; HYDRO: large station
-  // SP: requires drilled borehole (allowed for waterSource="well")
-  const DOMESTIC_WATER_EXCLUDED_FAMILIES = ["CR", "CRE", "NB", "NK", "HYDRO", "SP", "MAGNA3", "ALPHA3"];
+  // CR/CRE: require 3-phase 400V (not in homes); NB/NK: industrial flanged
+  // SP/SQ/SQE: require a drilled borehole — only correct when waterSource="well"
+  // MTH: industrial 3-phase coolant pump — wrong for any residential use
+  // HYDRO removed from list (no longer in catalog)
+  const DOMESTIC_WATER_EXCLUDED_FAMILIES = ["CR", "CRE", "NB", "NK", "SP", "SQ", "SQE", "MTH", "MAGNA3", "ALPHA3"];
 
   const candidates = pumps.filter((p) => {
     // Category exclusion — fundamentally wrong pump types

@@ -14,12 +14,13 @@ interface ChatRequest {
   conversationId?: string;
   sessionId: string;
   history?: Array<{ role: string; content: string }>;
+  lastEngineAction?: string;
 }
 
 export async function POST(request: NextRequest) {
   try {
     const body: ChatRequest = await request.json();
-    const { message, conversationId, sessionId, history: clientHistory } = body;
+    const { message, conversationId, sessionId, history: clientHistory, lastEngineAction: clientLastEngineAction } = body;
 
     if (!message || !sessionId) {
       return new Response(
@@ -33,14 +34,14 @@ export async function POST(request: NextRequest) {
     // ─── Load conversation history ────────────────────────────────
     let currentConversationId = conversationId;
     const supabase = getServiceClient();
-    const historyMessages: Array<{ role: string; content: string }> = [];
+    const historyMessages: Array<{ role: string; content: string; metadata?: Record<string, unknown> }> = [];
 
     if (supabase) {
       try {
         if (currentConversationId) {
           const { data: history } = await supabase
             .from("messages")
-            .select("role, content")
+            .select("role, content, metadata")
             .eq("conversation_id", currentConversationId)
             .order("created_at", { ascending: true })
             .limit(50);
@@ -81,6 +82,22 @@ export async function POST(request: NextRequest) {
       { role: "user", content: message },
     ];
 
+    // Detect last engine action — for post-recommendation feedback handling
+    // For signed-in users: read from Supabase message metadata
+    // For guests: read from client-provided lastEngineAction (sent from Zustand store)
+    let lastEngineAction: "recommend" | "ask" | "greet" | undefined;
+    for (let i = historyMessages.length - 1; i >= 0; i--) {
+      const m = historyMessages[i];
+      if (m.role === "assistant" && m.metadata?.engineAction) {
+        lastEngineAction = m.metadata.engineAction as typeof lastEngineAction;
+        break;
+      }
+    }
+    // Guest fallback: use client-provided value if Supabase didn't have it
+    if (!lastEngineAction && clientLastEngineAction) {
+      lastEngineAction = clientLastEngineAction as "recommend" | "ask" | "greet";
+    }
+
     // Run LLM-based intent extraction and regex extraction in parallel
     // LLM understands natural language, paraphrases, and Filipino/Tagalog
     // Regex is fast and precise for exact numbers (flow, head, power)
@@ -106,7 +123,7 @@ export async function POST(request: NextRequest) {
       ...(llmIntent.problem && !regexState.problem && { problem: llmIntent.problem }),
     };
 
-    let engineResult: EngineResult = getNextAction(state, message);
+    let engineResult: EngineResult = getNextAction(state, message, lastEngineAction);
 
     // Handle 0 pump matches — fall back to asking for more info
     if (
@@ -341,6 +358,9 @@ The detailed specs and ROI are shown in cards below — just write a warm, natur
           // ─── Send metadata ───────────────────────────────────────
           const metadata: Record<string, unknown> = {};
 
+          // Always send engineAction so client can track post-recommendation state (for guests)
+          metadata.engineAction = engineResult.action;
+
           // Use AI-generated suggestions for ask/greet; engine suggestions for recommend
           const finalSuggestions = aiSuggestions.length > 0
             ? aiSuggestions
@@ -361,6 +381,7 @@ The detailed specs and ROI are shown in cards below — just write a warm, natur
               category: pump.category,
               type: pump.type,
               image_url: pump.image_url,
+              pdf_url: pump.pdf_url,
               applications: pump.applications,
               features: pump.features,
               specs: pump.specs,

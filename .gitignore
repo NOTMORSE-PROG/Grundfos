@@ -40,6 +40,10 @@ pumpwise_jira_tickets*.xlsx
 seed_pump_catalog.json
 seed_pump_catalog_summary.md
 
+# Hackathon eval kit and raw data (local only)
+/challenge5_eval_kit/
+/data/
+
 # vercel
 .vercel
 
