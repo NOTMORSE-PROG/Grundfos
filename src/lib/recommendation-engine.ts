@@ -20,12 +20,14 @@ export interface ConversationState {
   floors?: number;
   flow_m3h?: number;
   head_m?: number;
+  motor_kw?: number;
   existingPump?: string;
   existingPumpBrand?: string;
   existingPumpPower?: number;
   bathrooms?: number;
   waterSource?: WaterSource;
   problem?: Problem;
+  evalDomain?: string;
 }
 
 export interface CatalogPump {
@@ -117,6 +119,14 @@ const HEAD_PATTERN_LOOSE = /(\d+(?:\.\d+)?)\s*m\b(?!\s*[³3²\/])/i;
 const FLOORS_PATTERN = /(\d+)\s*(?:floor|stor(?:e?y|ies))/i;
 const BATHROOM_PATTERN = /(\d+)\s*(?:bathroom|bath(?:room)?s?|toilet|cr\b|restroom|t&b|comfort\s*room)/i;
 
+// Non-SI unit conversion patterns
+const GPM_PATTERN = /(\d+(?:\.\d+)?)\s*(?:gpm|gallon[s]?\s*per\s*min(?:ute)?)/i;
+const LPM_PATTERN = /(\d+(?:\.\d+)?)\s*L\/min\b/i;
+const LPS_PATTERN = /(\d+(?:\.\d+)?)\s*L\/s\b/i;
+const FT_HEAD_PATTERN = /(\d+(?:\.\d+)?)\s*ft\b/i;
+const HP_PATTERN = /(\d+(?:\.\d+)?)\s*hp\b/i;
+const MOTOR_KW_PATTERN = /(\d+(?:\.\d+)?)\s*kW\s*(?:motor|power)/i;
+
 const COMPETITOR_PATTERN = /\b(wilo|ksb|xylem|lowara|dab|pedrollo|ebara|flygt|prominent|iwaki)\b/i;
 const PUMP_MODEL_PATTERN = /\b([A-Z][A-Za-z]*[\s-]?\d[\w\-./]*)\b/;
 const POWER_PATTERN = /(?:power|rated|watt(?:s|age)?):?\s*(\d+(?:\.\d+)?)\s*kw/i;
@@ -144,12 +154,39 @@ const PROBLEM_PATTERNS: Array<{ problem: Problem; pattern: RegExp }> = [
 
 const FAMILY_PREFERENCE: Partial<Record<Application, Record<string, number>>> = {
   domestic_water: { SCALA: 15, ALPHA: 10 },
-  heating:        { MAGNA3: 15, ALPHA: 12, NB: 5, NK: 5, CR: 3 },
-  cooling:        { MAGNA3: 15, ALPHA: 12, NB: 5, NK: 5, CR: 3 },
-  water_supply:   { CR: 15, CRE: 15, SP: 12, SCALA: 8, HYDRO: 10, NB: 10, NK: 10 },
+  heating:        { MAGNA3: 15, MAGNA1: 12, TP: 10, ALPHA2: 8, ALPHA1: 7, UPM3: 8, UPM2: 6, UP: 5 },
+  cooling:        { MAGNA3: 15, MAGNA1: 12, TP: 10, ALPHA2: 8 },
+  water_supply:   { CR: 15, CM: 12, SP: 12, SCALA: 8, HYDRO: 10, MTH: 8 },
   wastewater:     { SEG: 15, SE: 15 },
   dosing:         { DDA: 15 },
 };
+
+// ─── Domain-Aware Preferences (eval domains override/supplement FAMILY_PREFERENCE) ──
+// These are applied when an evalDomain is detected from the query.
+const DOMAIN_PREFERENCE: Record<string, Record<string, number>> = {
+  "CBS":           { MAGNA3: 20, MAGNA1: 15, TP: 12, UPS: 8 },
+  "DBS-Heating":   { UPM3: 15, ALPHA2: 12, ALPHA1: 10, UPM2: 8 },
+  "DBS-HotWater":  { UP: 18, UPS: 15, COMFORT: 12 },
+  "IN":            { CR: 15, CM: 12, MTH: 10, MG: 8 },
+  "WU-Borehole":   { SQ: 20, SP: 5, SQE: 3 },
+  "WU-Domestic":   { SQE: 20, SQ: 3 },
+  "WU-Irrigation": { SP: 18, SQ: 5, SQE: 3 },
+  "WU":            { SP: 15, SQ: 12, SQE: 10 },
+};
+
+// ─── Domain Detection from Query Text ───────────────────────────────
+export function detectEvalDomain(queryText: string): string | undefined {
+  if (/cbs-hvac|cbs\b.*hvac|commercial\s+building.*hvac/i.test(queryText)) return "CBS";
+  if (/dbs-hotwater|dbs\b.*hot[\s-]?water/i.test(queryText)) return "DBS-HotWater";
+  if (/dbs-heating|dbs\b.*heat/i.test(queryText)) return "DBS-Heating";
+  if (/industry-motordrive|motor[\s-]?drive/i.test(queryText)) return "IN";
+  if (/industry-/i.test(queryText)) return "IN";
+  if (/wu-borehole|borehole\s+service/i.test(queryText)) return "WU-Borehole";
+  if (/wu-domestic|domestic\s+service/i.test(queryText)) return "WU-Domestic";
+  if (/wu-irrigation|irrigation\s+service/i.test(queryText)) return "WU-Irrigation";
+  if (/wu-boosting|water\s+utility/i.test(queryText)) return "WU";
+  return undefined;
+}
 
 // Category exclusions — fundamentally different pump types
 const CATEGORY_EXCLUSIONS: Record<string, Application[]> = {
@@ -208,12 +245,32 @@ export function extractIntent(messages: Array<{ role: string; content: string }>
     else if (pattern.test(allText)) { state.buildingSize = size; break; }
   }
 
-  // Exact flow/head specs
+  // Exact flow/head specs — SI units first
   const flowMatch = allText.match(FLOW_PATTERN);
   if (flowMatch) state.flow_m3h = parseFloat(flowMatch[1]);
 
   const headMatch = allText.match(HEAD_PATTERN) || allText.match(HEAD_PATTERN_LOOSE);
   if (headMatch) state.head_m = parseFloat(headMatch[1]);
+
+  // Non-SI unit conversions (only if SI unit not already found)
+  if (!state.flow_m3h) {
+    const gpmMatch = allText.match(GPM_PATTERN);
+    if (gpmMatch) state.flow_m3h = Math.round(parseFloat(gpmMatch[1]) * 0.2271 * 1000) / 1000;
+    const lpmMatch = allText.match(LPM_PATTERN);
+    if (lpmMatch) state.flow_m3h = Math.round(parseFloat(lpmMatch[1]) * 0.06 * 1000) / 1000;
+    const lpsMatch = allText.match(LPS_PATTERN);
+    if (lpsMatch) state.flow_m3h = Math.round(parseFloat(lpsMatch[1]) * 3.6 * 1000) / 1000;
+  }
+  if (!state.head_m) {
+    const ftMatch = allText.match(FT_HEAD_PATTERN);
+    if (ftMatch) state.head_m = Math.round(parseFloat(ftMatch[1]) * 0.3048 * 1000) / 1000;
+  }
+
+  // Motor power extraction (hp or kW — for power-only matching)
+  const hpMatch = allText.match(HP_PATTERN);
+  if (hpMatch) state.motor_kw = Math.round(parseFloat(hpMatch[1]) * 0.7457 * 1000) / 1000;
+  const motorKwMatch = allText.match(MOTOR_KW_PATTERN);
+  if (motorKwMatch) state.motor_kw = parseFloat(motorKwMatch[1]);
 
   // Floor count → infer building size
   const floorsMatch = allText.match(FLOORS_PATTERN);
@@ -346,6 +403,8 @@ function calculateConfidence(
 function getInfoQuality(state: ConversationState): number {
   // Exact specs bypass — always enough info
   if (state.flow_m3h != null && state.head_m != null) return 10;
+  // Motor power only — always enough info for motor matching
+  if (state.motor_kw != null && !state.flow_m3h) return 10;
 
   let score = 0;
   if (state.application) score += 3;
@@ -395,20 +454,27 @@ export function getNextAction(state: ConversationState, latestMessage?: string):
   // Enough info → recommend (threshold raised from 5 → 7)
   if (quality >= 7) {
     // Hard gate: domestic_water MUST have physical dimensions before recommending.
-    // Problem alone ("something's wrong") is not enough to size a pump.
-    // A consultant always needs: what's wrong + how big is the house.
     if (state.application === "domestic_water" && !state.floors && !state.bathrooms) {
+      if (state.problem === "replacement" && !state.existingPumpBrand) {
+        // Replacing a pump but we don't know what it does yet — ask usage first
+        return {
+          action: "ask",
+          questionContext: "They want to replace a pump but haven't said what it's used for. Ask what the pump does — water pressure at home, heating/cooling system, or a borehole/well pump?",
+          suggestions: ["Water pressure at home", "Heating system", "Borehole / well pump", "I know the brand/model"],
+          state,
+        };
+      }
       if (state.problem) {
         return {
           action: "ask",
-          questionContext: `They have ${state.problem.replace("_", " ")} in their home. Ask how many floors and/or bathrooms — needed to size the pump correctly.`,
-          suggestions: ["1-2 floors", "3-4 floors", "1-2 bathrooms", "3-4 bathrooms"],
+          questionContext: "Ask how many floors their house has — this is needed to calculate the correct pump size. Focus only on floors.",
+          suggestions: ["1-2 floors", "3-4 floors", "5-6 floors", "7+ floors"],
           state,
         };
       }
       return {
         action: "ask",
-        questionContext: "They have a house but haven't described the water situation. Ask what's going on — low pressure, replacing a pump, or new install?",
+        questionContext: "They have a home but haven't described the water situation. Ask what's going on — low pressure, replacing a pump, new install, or high energy bills?",
         suggestions: ["Low water pressure", "Replacing old pump", "New installation", "High water bills"],
         state,
       };
@@ -421,9 +487,9 @@ export function getNextAction(state: ConversationState, latestMessage?: string):
     return {
       action: "ask",
       questionContext: state.flow_m3h
-        ? "They gave specs but didn't say what the system is for. Ask what application — heating, cooling, water supply, etc."
-        : "Ask what kind of system or problem they're dealing with.",
-      suggestions: ["Heating system", "Cooling/AC", "Water pressure", "Replace a pump"],
+        ? "They gave flow/pressure specs but haven't said what the system is for. Ask what application — heating, cooling, water supply, or wastewater?"
+        : "Ask what kind of pump system or water problem they're dealing with — heating, water pressure, replacing a pump, etc.",
+      suggestions: ["Heating system", "Cooling / AC", "Water pressure at home", "Replace a pump"],
       state,
     };
   }
@@ -431,19 +497,27 @@ export function getNextAction(state: ConversationState, latestMessage?: string):
   // Have application — now ask the most important missing piece
   if (state.application === "domestic_water") {
     if (!state.problem) {
-      // Ask what the issue is first — shapes everything else
       return {
         action: "ask",
-        questionContext: "They have a house/home but haven't said why they need a pump. Ask what their water situation is — low pressure, replacing old pump, new install?",
-        suggestions: ["Low water pressure", "Replacing old pump", "New installation", "High water bills"],
+        questionContext: "They have a home but haven't said why they need a pump. Ask what their water situation is — low pressure, no water, replacing an old pump, or wanting to save on bills?",
+        suggestions: ["Low water pressure", "No water at all", "Replacing old pump", "Save on energy bills"],
         state,
       };
     }
-    // Problem known but missing size detail
+    if (state.problem === "replacement" && !state.existingPumpBrand) {
+      // Replacing a pump — ask what it's used for before jumping to sizing
+      return {
+        action: "ask",
+        questionContext: "They want to replace a pump but haven't said what it's used for. Ask what the pump does — water pressure, heating/cooling, or borehole/well?",
+        suggestions: ["Water pressure at home", "Heating system", "Borehole / well pump", "I know the brand/model"],
+        state,
+      };
+    }
+    // Problem known (and not a blind replacement) but missing house size — ask floors only
     return {
       action: "ask",
-      questionContext: `They have ${state.problem.replace("_", " ")} in their home. Ask how many floors and/or bathrooms — needed to size the pump correctly.`,
-      suggestions: ["1-2 floors", "3-4 floors", "1-2 bathrooms", "3-4 bathrooms"],
+      questionContext: "Ask how many floors their house has — this determines the pump head required. Ask specifically about floors, not bathrooms.",
+      suggestions: ["1-2 floors", "3-4 floors", "5-6 floors", "7+ floors"],
       state,
     };
   }
@@ -452,8 +526,8 @@ export function getNextAction(state: ConversationState, latestMessage?: string):
     if (!state.buildingSize && state.flow_m3h == null) {
       return {
         action: "ask",
-        questionContext: "Ask about the scale of the facility — size and how much water they need.",
-        suggestions: ["Small building/shop", "Medium (office/hotel)", "Large (factory/campus)", "I know the flow rate"],
+        questionContext: "Ask about the size of the building or facility that needs water supply — a small shop, medium office/hotel, or a large factory or campus?",
+        suggestions: ["Small building / shop", "Medium (office/hotel)", "Large (factory/campus)", "I know the flow rate"],
         state,
       };
     }
@@ -463,7 +537,7 @@ export function getNextAction(state: ConversationState, latestMessage?: string):
     if (!state.floors && !state.buildingSize) {
       return {
         action: "ask",
-        questionContext: "Ask how many floors the building has — critical for calculating pump head.",
+        questionContext: "Ask how many floors the building has — this is critical for calculating the pump head for the heating/cooling loop.",
         suggestions: ["1-3 floors", "4-6 floors", "7-10 floors", "10+ floors"],
         state,
       };
@@ -473,8 +547,8 @@ export function getNextAction(state: ConversationState, latestMessage?: string):
   if (state.application === "wastewater" && !state.buildingSize) {
     return {
       action: "ask",
-      questionContext: "Ask about the scale of the wastewater system — domestic basement sump or commercial.",
-      suggestions: ["Home/basement", "Small building", "Commercial/industrial"],
+      questionContext: "Ask about the scale of the wastewater system — is it a home basement sump, a small commercial building, or a large industrial site?",
+      suggestions: ["Home / basement", "Small building", "Large commercial / industrial"],
       state,
     };
   }
@@ -482,7 +556,7 @@ export function getNextAction(state: ConversationState, latestMessage?: string):
   if (state.application === "dosing" && !state.buildingSize) {
     return {
       action: "ask",
-      questionContext: "Ask about the dosing application — what they're dosing and the rough scale.",
+      questionContext: "Ask about the dosing application — what chemical or substance they're dosing, and at what scale.",
       suggestions: ["Chlorination", "pH adjustment", "Water treatment", "I know the flow rate"],
       state,
     };
@@ -492,19 +566,60 @@ export function getNextAction(state: ConversationState, latestMessage?: string):
   return buildRecommendation(state);
 }
 
+// ─── Motor-Power-Only Matching ───────────────────────────────────────
+
+function matchPumpsByMotorPower(
+  motorKw: number,
+  evalDomain?: string
+): Array<{ pump: CatalogPump; confidence: number; label: string }> {
+  const pumps = (pumpCatalog.pumps || []) as unknown as CatalogPump[];
+  const tolerance = 0.35; // ±35% power tolerance
+
+  const domainPrefs = evalDomain ? (DOMAIN_PREFERENCE[evalDomain] || {}) : {};
+
+  const candidates = pumps.filter((p) => {
+    const pumpKw = safeNumber(p.specs.power_kw) || safeNumber(p.specs.motor_kw);
+    if (!pumpKw) return false;
+    return Math.abs(pumpKw - motorKw) / motorKw < tolerance;
+  });
+
+  // Sort by: closest power match, then domain preference
+  const scored = candidates.map((pump) => {
+    const pumpKw = safeNumber(pump.specs.power_kw) || safeNumber(pump.specs.motor_kw) || 0;
+    const powerDiff = Math.abs(pumpKw - motorKw) / motorKw;
+    const familyKey = pump.family.toUpperCase().replace(/\d+/g, "").trim();
+    const prefBonus = domainPrefs[familyKey] || 0;
+    return { pump, powerDiff, prefBonus };
+  });
+
+  scored.sort((a, b) => (a.powerDiff - b.powerDiff) - (a.prefBonus - b.prefBonus) * 0.05);
+
+  return scored.slice(0, 3).map((s) => ({
+    pump: s.pump,
+    confidence: Math.round(95 - s.powerDiff * 30),
+    label: s.powerDiff < 0.1 ? "Excellent Match" : s.powerDiff < 0.2 ? "Good Match" : "Fair Match",
+  }));
+}
+
 // ─── Pump Matching ───────────────────────────────────────────────────
 
 function matchPumpsByDutyPoint(
   dutyPoint: DutyPoint,
   application: Application,
-  waterSource?: WaterSource
+  waterSource?: WaterSource,
+  evalDomain?: string
 ): Array<{ pump: CatalogPump; confidence: number; label: string }> {
   const pumps = (pumpCatalog.pumps || []) as unknown as CatalogPump[];
   const requiredFlow = dutyPoint.estimated_flow_m3h;
   const requiredHead = dutyPoint.estimated_head_m;
 
-  // Family preferences for this application
-  const preferences = FAMILY_PREFERENCE[application] || {};
+  // Family preferences: merge application defaults with eval domain overrides
+  const appPrefs = FAMILY_PREFERENCE[application] || {};
+  const domainPrefs = evalDomain ? (DOMAIN_PREFERENCE[evalDomain] || {}) : {};
+  // Domain prefs take priority when evalDomain is known
+  const preferences = evalDomain
+    ? { ...appPrefs, ...domainPrefs }
+    : appPrefs;
   // Water source bonus: if "well", boost SP family
   const waterSourceBonus: Record<string, number> = {};
   if (waterSource === "well") waterSourceBonus["SP"] = 8;
@@ -659,6 +774,31 @@ function buildRecommendation(state: ConversationState): EngineResult {
   const region = DEFAULT_ENERGY_RATES.PH;
   const operatingHours = getOperatingHours(application, buildingSize);
 
+  // Motor-power-only path (when only motor kW/hp is given, no flow/head)
+  if (state.motor_kw && !state.flow_m3h && !state.head_m) {
+    const motorMatches = matchPumpsByMotorPower(state.motor_kw, state.evalDomain);
+    const recommendedPumps: RecommendedPump[] = motorMatches.map(({ pump, confidence, label }) => {
+      const newPower = safeNumber(pump.specs.power_kw) || safeNumber(pump.specs.motor_kw) || state.motor_kw!;
+      const existingPower = state.motor_kw! * 1.2;
+      const pumpCostPhp = parsePrice(pump.price_range_usd) * USD_TO_PHP;
+      const roi = calcROISummary(
+        { power_kw: existingPower, operating_hours: operatingHours, electricity_rate: region.rate, co2_factor: region.co2 },
+        { power_kw: newPower, operating_hours: operatingHours, electricity_rate: region.rate, co2_factor: region.co2 },
+        pumpCostPhp
+      );
+      return {
+        ...pump,
+        price_range_php: parsePricePhp(pump.price_range_usd),
+        roi,
+        oversizingNote: `Matched by motor power: ${state.motor_kw} kW`,
+        matchConfidence: confidence,
+        matchLabel: label,
+      };
+    });
+    const dutyPt: DutyPoint = { estimated_flow_m3h: 0, estimated_head_m: 0, confidence: "estimated", assumptions: [`Motor power: ${state.motor_kw} kW`] };
+    return { action: "recommend", dutyPoint: dutyPt, pumps: recommendedPumps, requirements: [{ label: "Motor Power", value: `${state.motor_kw} kW` }], state };
+  }
+
   let dutyPoint: DutyPoint;
 
   if (state.flow_m3h != null && state.head_m != null) {
@@ -699,7 +839,7 @@ function buildRecommendation(state: ConversationState): EngineResult {
     });
   }
 
-  const matched = matchPumpsByDutyPoint(dutyPoint, application, state.waterSource);
+  const matched = matchPumpsByDutyPoint(dutyPoint, application, state.waterSource, state.evalDomain);
   const oversizingFactor = OVERSIZING_FACTORS[application]?.[buildingSize] || 1.4;
 
   const recommendedPumps: RecommendedPump[] = matched.map(({ pump, confidence, label }) => {

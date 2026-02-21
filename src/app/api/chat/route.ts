@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import { getGroqClient } from "@/lib/groq";
-import { QUESTION_PROMPT, EXPLANATION_PROMPT, COMPARISON_PROMPT } from "@/lib/prompts";
+import { buildQuestionSystemPrompt, EXPLANATION_PROMPT, COMPARISON_PROMPT } from "@/lib/prompts";
 import { getServiceClient } from "@/lib/supabase";
 import { extractIntent, getNextAction, type EngineResult, type RecommendedPump, type ConversationState } from "@/lib/recommendation-engine";
 import { parseMessageMetadata } from "@/lib/parse-message-metadata";
@@ -100,6 +100,7 @@ export async function POST(request: NextRequest) {
       ...(llmIntent.waterSource && !regexState.waterSource && { waterSource: llmIntent.waterSource }),
       ...(llmIntent.flow_m3h != null && !regexState.flow_m3h && { flow_m3h: llmIntent.flow_m3h }),
       ...(llmIntent.head_m != null && !regexState.head_m && { head_m: llmIntent.head_m }),
+      ...(llmIntent.motor_kw != null && !regexState.motor_kw && { motor_kw: llmIntent.motor_kw }),
       ...(llmIntent.existingPumpBrand && !regexState.existingPumpBrand && { existingPumpBrand: llmIntent.existingPumpBrand }),
       ...(llmIntent.existingPump && !regexState.existingPump && { existingPump: llmIntent.existingPump }),
       ...(llmIntent.problem && !regexState.problem && { problem: llmIntent.problem }),
@@ -127,30 +128,69 @@ export async function POST(request: NextRequest) {
       content: string;
     }> = [];
 
-    if (engineResult.action === "ask" || engineResult.action === "greet") {
-      // Build context about what we already know
-      const knownContext: string[] = [];
-      if (state.application) knownContext.push(`application: ${state.application.replace(/_/g, " ")}`);
-      if (state.buildingSize) knownContext.push(`building: ${state.buildingSize}`);
-      if (state.existingPumpBrand) knownContext.push(`current pump: ${state.existingPumpBrand}${state.existingPump ? " " + state.existingPump : ""}`);
-      if (state.flow_m3h) knownContext.push(`flow: ${state.flow_m3h} m³/h`);
-      if (state.head_m) knownContext.push(`head: ${state.head_m} m`);
-      if (state.waterSource) knownContext.push(`water source: ${state.waterSource}`);
-      if (state.bathrooms) knownContext.push(`bathrooms: ${state.bathrooms}`);
-      if (state.floors) knownContext.push(`floors: ${state.floors}`);
+    // Shared: build known-context string for both question and recommend paths
+    const knownContext: string[] = [];
+    if (state.application) knownContext.push(`application: ${state.application.replace(/_/g, " ")}`);
+    if (state.buildingSize) knownContext.push(`building: ${state.buildingSize}`);
+    if (state.existingPumpBrand) knownContext.push(`current pump: ${state.existingPumpBrand}${state.existingPump ? " " + state.existingPump : ""}`);
+    if (state.flow_m3h) knownContext.push(`flow: ${state.flow_m3h} m³/h`);
+    if (state.head_m) knownContext.push(`head: ${state.head_m} m`);
+    if (state.waterSource) knownContext.push(`water source: ${state.waterSource}`);
+    if (state.bathrooms) knownContext.push(`bathrooms: ${state.bathrooms}`);
+    if (state.floors) knownContext.push(`floors: ${state.floors}`);
+    if (state.problem) knownContext.push(`problem: ${state.problem.replace(/_/g, " ")}`);
+    const knownContextStr = knownContext.length > 0 ? knownContext.join(", ") : "nothing yet";
 
-      chatMessages.push({
-        role: "system",
-        content: `${QUESTION_PROMPT}\n\nYou already know: ${knownContext.length > 0 ? knownContext.join(", ") : "nothing yet"}.\nYour task: ${engineResult.questionContext}`,
-      });
-      // Include history for conversational continuity
-      for (const msg of effectiveHistory) {
-        chatMessages.push({
-          role: msg.role as "user" | "assistant",
-          content: msg.content,
+    // AI-generated question + suggestions (ask / greet)
+    let aiQuestion = "";
+    let aiSuggestions: string[] = [];
+
+    if (engineResult.action === "ask" || engineResult.action === "greet") {
+      // Single non-streamed JSON call — question and chips generated together so they always match
+      const questionContext = engineResult.questionContext ||
+        (engineResult.action === "greet"
+          ? "Greet the user and ask what pump problem they need help with."
+          : "Ask the user for more information about their pump needs.");
+
+      try {
+        const qResponse = await groq.chat.completions.create({
+          model: "llama-3.1-8b-instant",
+          messages: [
+            {
+              role: "system",
+              content: buildQuestionSystemPrompt(questionContext, knownContextStr),
+            },
+            // Include last few messages for conversational continuity
+            ...effectiveHistory.slice(-4).map((m) => ({
+              role: m.role as "user" | "assistant",
+              content: m.content,
+            })),
+            { role: "user", content: message },
+          ],
+          temperature: 0.7,
+          max_tokens: 150,
+          response_format: { type: "json_object" },
         });
+
+        const qRaw = qResponse.choices[0]?.message?.content || "{}";
+        const qParsed = JSON.parse(qRaw) as { question?: string; suggestions?: unknown };
+        if (typeof qParsed.question === "string" && qParsed.question.trim()) {
+          aiQuestion = qParsed.question.trim();
+        }
+        if (Array.isArray(qParsed.suggestions)) {
+          aiSuggestions = (qParsed.suggestions as unknown[])
+            .filter((s): s is string => typeof s === "string" && s.trim().length > 0)
+            .slice(0, 4);
+        }
+      } catch {
+        // Silent fail — fallback to engine suggestions below
       }
-      chatMessages.push({ role: "user", content: message });
+
+      // Fallback if LLM failed
+      if (!aiQuestion) aiQuestion = "Could you tell me a bit more about what you need?";
+      if (aiSuggestions.length === 0 && engineResult.suggestions) {
+        aiSuggestions = engineResult.suggestions;
+      }
     } else {
       // Recommendation mode: choose prompt based on whether it's competitor replacement
       const isCompetitor = engineResult.isCompetitorReplacement;
@@ -191,14 +231,17 @@ The detailed specs and ROI are shown in cards below — just write a warm, natur
       chatMessages.push({ role: "user", content: message });
     }
 
-    // ─── Stream LLM response ─────────────────────────────────────
-    const chatStream = await groq.chat.completions.create({
-      model: "llama-3.1-8b-instant",
-      messages: chatMessages,
-      stream: true,
-      temperature: engineResult.action === "recommend" ? 0.6 : 0.7,
-      max_tokens: engineResult.action === "recommend" ? 200 : engineResult.action === "greet" ? 80 : 80,
-    });
+    // ─── For recommend: build streamed LLM call ───────────────────
+    let chatStream: AsyncIterable<{ choices: Array<{ delta?: { content?: string | null } }> }> | null = null;
+    if (engineResult.action === "recommend" && chatMessages.length > 0) {
+      chatStream = await groq.chat.completions.create({
+        model: "llama-3.1-8b-instant",
+        messages: chatMessages,
+        stream: true,
+        temperature: 0.6,
+        max_tokens: 200,
+      });
+    }
 
     const encoder = new TextEncoder();
     let fullResponse = "";
@@ -214,16 +257,27 @@ The detailed specs and ROI are shown in cards below — just write a warm, natur
             );
           }
 
-          for await (const chunk of chatStream) {
-            const content = chunk.choices[0]?.delta?.content;
-            if (content) {
-              fullResponse += content;
-              controller.enqueue(
-                encoder.encode(
-                  `data: ${JSON.stringify({ type: "token", content })}\n\n`
-                )
-              );
+          if (chatStream) {
+            // Recommend: stream tokens from LLM
+            for await (const chunk of chatStream) {
+              const content = chunk.choices[0]?.delta?.content;
+              if (content) {
+                fullResponse += content;
+                controller.enqueue(
+                  encoder.encode(
+                    `data: ${JSON.stringify({ type: "token", content })}\n\n`
+                  )
+                );
+              }
             }
+          } else {
+            // Ask / greet: send AI-generated question as a single token (already ready)
+            fullResponse = aiQuestion;
+            controller.enqueue(
+              encoder.encode(
+                `data: ${JSON.stringify({ type: "token", content: aiQuestion })}\n\n`
+              )
+            );
           }
 
           // Strip any accidental markers the LLM might output
@@ -248,7 +302,7 @@ The detailed specs and ROI are shown in cards below — just write a warm, natur
                 content: parsed.content,
                 metadata: {
                   engineAction: engineResult.action,
-                  suggestions: engineResult.suggestions,
+                  suggestions: aiSuggestions.length > 0 ? aiSuggestions : engineResult.suggestions,
                   requirements: engineResult.requirements,
                 },
               });
@@ -284,11 +338,15 @@ The detailed specs and ROI are shown in cards below — just write a warm, natur
             }
           }
 
-          // ─── Send engine-calculated metadata ────────────────────
+          // ─── Send metadata ───────────────────────────────────────
           const metadata: Record<string, unknown> = {};
 
-          if (engineResult.suggestions) {
-            metadata.suggestions = engineResult.suggestions;
+          // Use AI-generated suggestions for ask/greet; engine suggestions for recommend
+          const finalSuggestions = aiSuggestions.length > 0
+            ? aiSuggestions
+            : engineResult.suggestions;
+          if (finalSuggestions && finalSuggestions.length > 0) {
+            metadata.suggestions = finalSuggestions;
           }
 
           if (engineResult.requirements) {
