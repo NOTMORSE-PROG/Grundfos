@@ -2,7 +2,7 @@ import { NextRequest } from "next/server";
 import { getGroqClient } from "@/lib/groq";
 import { buildQuestionSystemPrompt, EXPLANATION_PROMPT, COMPARISON_PROMPT } from "@/lib/prompts";
 import { getServiceClient } from "@/lib/supabase";
-import { extractIntent, getNextAction, type EngineResult, type RecommendedPump, type ConversationState } from "@/lib/recommendation-engine";
+import { extractIntent, getNextAction, detectEvalDomain, type EngineResult, type RecommendedPump, type ConversationState } from "@/lib/recommendation-engine";
 import { parseMessageMetadata } from "@/lib/parse-message-metadata";
 import { extractIntentWithLLM } from "@/lib/extract-intent-llm";
 
@@ -122,6 +122,11 @@ export async function POST(request: NextRequest) {
       ...(llmIntent.existingPump && !regexState.existingPump && { existingPump: llmIntent.existingPump }),
       ...(llmIntent.problem && !regexState.problem && { problem: llmIntent.problem }),
     };
+
+    // Apply domain detection so CBS/DBS/IN/WU preference bonuses fire in chat (same as eval path)
+    const allText = allMessages.map((m) => m.content).join(" ");
+    const detectedDomain = detectEvalDomain(allText);
+    if (detectedDomain) state.evalDomain = detectedDomain;
 
     let engineResult: EngineResult = getNextAction(state, message, lastEngineAction);
 

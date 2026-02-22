@@ -44,6 +44,10 @@ seed_pump_catalog_summary.md
 /challenge5_eval_kit/
 /data/
 
+# Generated eval output (local only)
+score_report.json
+nul
+
 # vercel
 .vercel
 

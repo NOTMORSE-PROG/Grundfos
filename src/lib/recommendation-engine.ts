@@ -117,6 +117,8 @@ const SIZE_PATTERNS: Array<{ size: BuildingSize; pattern: RegExp }> = [
 ];
 
 const FLOW_PATTERN = /(\d+(?:\.\d+)?)\s*(?:m[³³3]\/h|m3\/h|cubic[\s-]?met(?:er|re)s?[\s-]?per[\s-]?hour|cmh)/i;
+// "X m³/h, Y m" — standard pump duty point notation (flow then head, comma/space separated)
+const DUTY_POINT_PATTERN = /(\d+(?:\.\d+)?)\s*(?:m[³³3]\/h|m3\/h)\s*[,;]?\s*(?:at\s+)?(\d+(?:\.\d+)?)\s*m\b(?!\s*[³3²\/])/i;
 const HEAD_PATTERN = /(?:at\s+)?(\d+(?:\.\d+)?)\s*(?:met(?:er|re)s?|m)\s*(?:head|of[\s-]?head)/i;
 const HEAD_PATTERN_LOOSE = /(\d+(?:\.\d+)?)\s*m\b(?!\s*[³3²\/])/i;
 const FLOORS_PATTERN = /(\d+)\s*(?:floor|stor(?:e?y|ies))/i;
@@ -171,10 +173,11 @@ const FAMILY_PREFERENCE: Partial<Record<Application, Record<string, number>>> = 
 // ─── Domain-Aware Preferences (eval domains override/supplement FAMILY_PREFERENCE) ──
 // These are applied when an evalDomain is detected from the query.
 const DOMAIN_PREFERENCE: Record<string, Record<string, number>> = {
-  "CBS":           { MAGNA3: 20, MAGNA1: 15, TP: 12, UPS: 8 },
-  "DBS-Heating":   { UPM3: 15, ALPHA2: 12, ALPHA1: 10, UPM2: 8 },
-  "DBS-HotWater":  { UP: 18, UPS: 15, COMFORT: 12 },
+  "CBS":           { MAGNA3: 12, MAGNA1: 12, TP: 10, UPS: 8 },
+  "DBS-Heating":   { UPM3: 8, ALPHA2: 8, ALPHA1: 8, UPM2: 8 },
+  "DBS-HotWater":  { UP: 12, UPS: 12, COMFORT: 10 },
   "IN":            { CR: 15, CM: 12, MTH: 10, MG: 8 },
+  "IN-MotorDrive": { MG: 20, CR: 5, CM: 3 },
   "WU-Borehole":   { SQ: 20, SP: 5, SQE: 3 },
   "WU-Domestic":   { SQE: 20, SQ: 3 },
   "WU-Irrigation": { SP: 18, SQ: 5, SQE: 3 },
@@ -186,7 +189,7 @@ export function detectEvalDomain(queryText: string): string | undefined {
   if (/cbs-hvac|cbs\b.*hvac|commercial\s+building.*hvac/i.test(queryText)) return "CBS";
   if (/dbs-hotwater|dbs\b.*hot[\s-]?water/i.test(queryText)) return "DBS-HotWater";
   if (/dbs-heating|dbs\b.*heat/i.test(queryText)) return "DBS-Heating";
-  if (/industry-motordrive|motor[\s-]?drive/i.test(queryText)) return "IN";
+  if (/industry-motordrive|motor[\s-]?drive/i.test(queryText)) return "IN-MotorDrive";
   if (/industry-/i.test(queryText)) return "IN";
   if (/wu-borehole|borehole\s+service/i.test(queryText)) return "WU-Borehole";
   if (/wu-domestic|domestic\s+service/i.test(queryText)) return "WU-Domestic";
@@ -252,12 +255,17 @@ export function extractIntent(messages: Array<{ role: string; content: string }>
     else if (pattern.test(allText)) { state.buildingSize = size; break; }
   }
 
-  // Exact flow/head specs — SI units first
-  const flowMatch = allText.match(FLOW_PATTERN);
-  if (flowMatch) state.flow_m3h = parseFloat(flowMatch[1]);
-
-  const headMatch = allText.match(HEAD_PATTERN) || allText.match(HEAD_PATTERN_LOOSE);
-  if (headMatch) state.head_m = parseFloat(headMatch[1]);
+  // Exact flow/head specs — try duty-point format first ("X m³/h, Y m"), then individual patterns
+  const dutyMatch = allText.match(DUTY_POINT_PATTERN);
+  if (dutyMatch) {
+    state.flow_m3h = parseFloat(dutyMatch[1]);
+    state.head_m = parseFloat(dutyMatch[2]);
+  } else {
+    const flowMatch = allText.match(FLOW_PATTERN);
+    if (flowMatch) state.flow_m3h = parseFloat(flowMatch[1]);
+    const headMatch = allText.match(HEAD_PATTERN) || allText.match(HEAD_PATTERN_LOOSE);
+    if (headMatch) state.head_m = parseFloat(headMatch[1]);
+  }
 
   // Non-SI unit conversions (only if SI unit not already found)
   if (!state.flow_m3h) {
@@ -530,7 +538,8 @@ export function getNextAction(
     if (
       state.application === "water_supply" &&
       !state.floors &&
-      state.flow_m3h == null
+      state.flow_m3h == null &&
+      !state.motor_kw
     ) {
       return {
         action: "ask",
@@ -598,7 +607,7 @@ export function getNextAction(
   }
 
   if (state.application === "water_supply") {
-    if (!state.buildingSize && state.flow_m3h == null) {
+    if (!state.buildingSize && state.flow_m3h == null && !state.motor_kw) {
       return {
         action: "ask",
         questionContext: "Ask about the size of the building or facility that needs water supply — a small shop, medium office/hotel, or a large factory or campus?",
@@ -607,7 +616,7 @@ export function getNextAction(
       };
     }
     // Have building size but no floors yet — floors are critical for head calculation
-    if (!state.floors && state.flow_m3h == null) {
+    if (!state.floors && state.flow_m3h == null && !state.motor_kw) {
       return {
         action: "ask",
         questionContext: "Ask how many floors the building or facility has — this determines the water pressure the pump must deliver.",
@@ -756,7 +765,7 @@ function matchPumpsByDutyPoint(
     const maxFlow = safeNumber(p.specs.max_flow_m3h);
     const maxHead = safeNumber(p.specs.max_head_m);
     if (!maxFlow || !maxHead) return false;
-    return maxFlow >= requiredFlow * 0.7 && maxHead >= requiredHead * 0.7;
+    return maxFlow >= requiredFlow * 0.7 && maxHead >= requiredHead * 0.85;
   });
 
   const appKeywords: Record<string, string[]> = {
@@ -775,13 +784,27 @@ function matchPumpsByDutyPoint(
 
     const flowRatio = maxFlow / requiredFlow;
     const headRatio = maxHead / requiredHead;
-    const oversizeScore = Math.abs(flowRatio - 1.2) + Math.abs(headRatio - 1.2);
+
+    // Rated-point scoring: when a pump's rated operating point is known and covers
+    // the required flow, score against that point (ideal=1.0) rather than max specs (ideal=1.2).
+    // This correctly penalises pumps whose rated duty is far from the requirement
+    // (e.g. MAGNA3 rated@38/10 scores poorly for a 30/12 duty point).
+    const ratedFlow = safeNumber(pump.specs.rated_flow_m3h);
+    const ratedHead = safeNumber(pump.specs.rated_head_m);
+    const useRatedPoint = ratedFlow !== null && ratedHead !== null
+      && ratedFlow >= requiredFlow * 0.95
+      && ratedHead >= requiredHead * 0.95;
+
+    const scoringFlow = useRatedPoint ? (ratedFlow / requiredFlow) : flowRatio;
+    const scoringHead = useRatedPoint ? (ratedHead / requiredHead) : headRatio;
+    const idealRatio  = useRatedPoint ? 1.0 : 1.2;
+    const oversizeScore = Math.abs(scoringFlow - idealRatio) + Math.abs(scoringHead - idealRatio);
 
     const appText = [...(pump.applications || []), pump.type, pump.category].join(" ").toLowerCase();
     const appMatch = keywords.some((kw) => appText.includes(kw));
     const appPenalty = appMatch ? 0 : 8;
 
-    const eei = (safeNumber(pump.specs.eei)) || 0.5;
+    const eei = (safeNumber(pump.specs.eei)) || 0.2;  // default to class-A typical (0.2) for pumps without EEI data
     const eeiScore = eei * 2;
 
     // Family preference bonus (lower score = better)

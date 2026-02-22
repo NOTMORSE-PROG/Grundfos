@@ -32,6 +32,12 @@ Fields:
 - existingPump: string (full pump model name, e.g. "Stratos 25/14", "Multivert MVI 3-6/16")
 - problem: "low_pressure" | "no_water" | "replacement" | "new_install" | "energy_saving"
 
+Pump duty point format — CRITICAL: in pump specifications, "X m³/h, Y m" ALWAYS means flow=X and head=Y:
+- "35 m³/h, 10 m" → flow_m3h: 35, head_m: 10
+- "30 m³/h, 12 m" → flow_m3h: 30, head_m: 12
+- "4.2 m³/h, 3.2 m" → flow_m3h: 4.2, head_m: 3.2
+- The second number (Y m) is ALWAYS head pressure — extract it even if the word "head" is absent.
+
 Unit conversions (ALWAYS output in m³/h and m):
 - 1 gpm = 0.2271 m³/h (e.g. "150 gpm" → flow_m3h: 34.065)
 - 1 L/min = 0.06 m³/h (e.g. "70 L/min" → flow_m3h: 4.2)
