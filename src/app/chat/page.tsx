@@ -79,9 +79,12 @@ export default function Home() {
       const history = messages.map((m) => ({ role: m.role, content: m.content }));
 
       // For guests (no Supabase): send the last assistant message's engineAction
-      // so the server knows if we just showed a recommendation
+      // AND whether any recommendation was ever shown — so the server stays in
+      // post-rec mode even after a clarifying "ask" turn comes between a recommendation
+      // and the next user message (e.g., "hmmm" → "Too expensive" chain).
       const lastAssistantMsg = [...messages].reverse().find((m) => m.role === "assistant");
       const lastEngineAction = lastAssistantMsg?.metadata?.engineAction as string | undefined;
+      const hadRecommendation = messages.some((m) => m.metadata?.engineAction === "recommend");
 
       try {
         const response = await fetch("/api/chat", {
@@ -93,6 +96,7 @@ export default function Home() {
             sessionId,
             history,
             lastEngineAction,
+            hadRecommendation,
           }),
           signal: controller.signal,
         });
@@ -171,15 +175,18 @@ export default function Home() {
     ]
   );
 
-  const handlePromptClick = (prompt: string) => {
-    if (messages.length > 0 && !isStreaming) {
-      // Mid-conversation suggestion click → send immediately
-      sendMessage(prompt);
-    } else {
-      // Empty state prompt click → fill input for user to customize
-      setPendingPrompt(prompt);
-    }
-  };
+  const handlePromptClick = useCallback(
+    (prompt: string) => {
+      if (messages.length > 0 && !isStreaming) {
+        // Mid-conversation suggestion click → send immediately
+        sendMessage(prompt);
+      } else {
+        // Empty state prompt click → fill input for user to customize
+        setPendingPrompt(prompt);
+      }
+    },
+    [messages.length, isStreaming, sendMessage]
+  );
 
   const handleStop = () => {
     abortController?.abort();

@@ -25,6 +25,8 @@ export function ChatMessages({
   // State drives the button visibility
   const [isNearBottom, setIsNearBottom] = useState(true);
   const [showScrollTop, setShowScrollTop] = useState(false);
+  // Track message count to distinguish "new message added" from "streaming token"
+  const prevMessageCountRef = useRef(messages.length);
 
   const handleScroll = useCallback(() => {
     const el = scrollContainerRef.current;
@@ -36,11 +38,23 @@ export function ChatMessages({
     setShowScrollTop(el.scrollTop > 200);
   }, []);
 
-  // Auto-scroll to bottom only when the user is already near the bottom.
-  // Uses a ref so the effect doesn't re-run just because scroll position changed.
+  // Auto-scroll logic:
+  //  • New message added  → smooth scroll once (feels intentional)
+  //  • Streaming token    → instant snap (avoids dozens of competing animations)
+  //  • User scrolled up   → never force scroll in either case
   useEffect(() => {
-    if (isNearBottomRef.current) {
+    if (!isNearBottomRef.current) return;
+
+    const el = scrollContainerRef.current;
+    const newMessageAdded = messages.length > prevMessageCountRef.current;
+    prevMessageCountRef.current = messages.length;
+
+    if (newMessageAdded) {
+      // A new message bubble appeared — one smooth scroll is fine
       bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    } else if (el) {
+      // Streaming token update — instant snap, no animation, no jank
+      el.scrollTop = el.scrollHeight;
     }
   }, [messages, isStreaming]);
 
@@ -81,18 +95,21 @@ export function ChatMessages({
             />
           ))}
 
+          {/* Thinking indicator — shows while streaming and last assistant message is still empty */}
           {isStreaming &&
-            messages[messages.length - 1]?.role !== "assistant" && (
+            messages[messages.length - 1]?.role === "assistant" &&
+            !messages[messages.length - 1]?.content && (
               <div className="flex gap-3 mb-6">
                 <div className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0 bg-grundfos-light border border-grundfos-blue/20">
                   <Loader2 className="w-4 h-4 text-grundfos-blue animate-spin" />
                 </div>
-                <div className="bg-card border border-border rounded-2xl rounded-tl-md px-4 py-3">
+                <div className="bg-card border border-border rounded-2xl rounded-tl-md px-4 py-3 flex items-center gap-2">
                   <div className="flex gap-1">
-                    <span className="w-2 h-2 bg-grundfos-blue/40 rounded-full animate-bounce [animation-delay:0ms]" />
-                    <span className="w-2 h-2 bg-grundfos-blue/40 rounded-full animate-bounce [animation-delay:150ms]" />
-                    <span className="w-2 h-2 bg-grundfos-blue/40 rounded-full animate-bounce [animation-delay:300ms]" />
+                    <span className="w-1.5 h-1.5 bg-grundfos-blue rounded-full animate-bounce [animation-delay:0ms]" />
+                    <span className="w-1.5 h-1.5 bg-grundfos-blue rounded-full animate-bounce [animation-delay:120ms]" />
+                    <span className="w-1.5 h-1.5 bg-grundfos-blue rounded-full animate-bounce [animation-delay:240ms]" />
                   </div>
+                  <span className="text-xs text-muted-foreground">Thinking…</span>
                 </div>
               </div>
             )}

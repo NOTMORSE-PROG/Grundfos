@@ -64,7 +64,11 @@ export function MessageBubble({
   // Only show suggestions on the last assistant message and not while streaming
   const showSuggestions =
     isLastMessage && !isStreaming && suggestions && suggestions.length > 0;
-  const hasPumps = pumps && pumps.length > 0 && !isStreaming;
+  // pumps only exist in metadata once the SSE metadata event arrives (after stream ends),
+  // so no isStreaming guard needed — a currently-streaming message won't have pumps yet.
+  // Keeping !isStreaming here would incorrectly hide cards in ALL previous messages
+  // while a new response is being streamed.
+  const hasPumps = pumps && pumps.length > 0;
 
   return (
     <div className={`flex gap-3 ${isUser ? "flex-row-reverse" : ""} mb-4`}>

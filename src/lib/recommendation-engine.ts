@@ -143,6 +143,18 @@ const POWER_PATTERN_W = /(?:power|rated|watt(?:s|age)?):?\s*(\d+(?:\.\d+)?)\s*w\
 const CORRECTION_PATTERN = /\b(no[,.]?\s|actually|i\s+meant?|not\s+\w+[,.]?\s*(it'?s|for)|change\s+(it\s+)?to|switch\s+to|wrong|correct(?:ion)?)\b/i;
 const GREETING_PATTERN = /^\s*(h(ello|i|ey|owdy)|yo\b|sup\b|good\s*(morning|afternoon|evening|day)|what'?s?\s*up|greetings|salut|hola)\s*[!?.]*\s*$/i;
 
+// ─── Latest-wins spec search ─────────────────────────────────────────
+// Searches user messages from most recent to oldest so that mid-conversation
+// spec corrections always override earlier values — regardless of how many
+// messages separate the old and new specs.
+function findLatestMatchInMessages(userTexts: string[], pattern: RegExp): RegExpMatchArray | null {
+  for (let i = userTexts.length - 1; i >= 0; i--) {
+    const match = userTexts[i].match(pattern);
+    if (match) return match;
+  }
+  return null;
+}
+
 const WATER_SOURCE_PATTERNS: Array<{ source: WaterSource; pattern: RegExp }> = [
   { source: "well", pattern: /\b(well|borehole|ground\s*water|deep\s*well)\b/i },
   { source: "tank", pattern: /\b(tank|cistern|reservoir|rain\s*water)\b/i },
@@ -264,40 +276,54 @@ export function extractIntent(messages: Array<{ role: string; content: string }>
     }
   }
 
-  // Exact flow/head specs — try duty-point format first ("X m³/h, Y m"), then individual patterns
-  const dutyMatch = allText.match(DUTY_POINT_PATTERN);
+  // Exact flow/head specs — LATEST MESSAGE WINS over older messages.
+  // findLatestMatchInMessages searches from most recent to oldest, so any mid-conversation
+  // spec correction automatically overrides earlier values — no special case needed.
+  const latestDutyMatch = latestText.match(DUTY_POINT_PATTERN);
+  const historyDutyMatch = !latestDutyMatch ? findLatestMatchInMessages(userTexts, DUTY_POINT_PATTERN) : null;
+  const dutyMatch = latestDutyMatch || historyDutyMatch;
   if (dutyMatch) {
     state.flow_m3h = parseFloat(dutyMatch[1]);
     state.head_m = parseFloat(dutyMatch[2]);
   } else {
-    const flowMatch = allText.match(FLOW_PATTERN);
+    // Flow: latest message first, then reverse-history search
+    const latestFlowMatch = latestText.match(FLOW_PATTERN);
+    const flowMatch = latestFlowMatch || findLatestMatchInMessages(userTexts, FLOW_PATTERN);
     if (flowMatch) state.flow_m3h = parseFloat(flowMatch[1]);
-    const headMatch = allText.match(HEAD_PATTERN) || allText.match(HEAD_PATTERN_LOOSE);
+
+    // Head: latest message first, then reverse-history search
+    const latestHeadMatch = latestText.match(HEAD_PATTERN) || latestText.match(HEAD_PATTERN_LOOSE);
+    const historyHeadMatch = latestHeadMatch ? null : (
+      findLatestMatchInMessages(userTexts, HEAD_PATTERN) ||
+      findLatestMatchInMessages(userTexts, HEAD_PATTERN_LOOSE)
+    );
+    const headMatch = latestHeadMatch || historyHeadMatch;
     if (headMatch) state.head_m = parseFloat(headMatch[1]);
   }
 
   // Non-SI unit conversions (only if SI unit not already found)
   if (!state.flow_m3h) {
-    const gpmMatch = allText.match(GPM_PATTERN);
+    const gpmMatch = latestText.match(GPM_PATTERN) || findLatestMatchInMessages(userTexts, GPM_PATTERN);
     if (gpmMatch) state.flow_m3h = Math.round(parseFloat(gpmMatch[1]) * 0.2271 * 1000) / 1000;
-    const lpmMatch = allText.match(LPM_PATTERN);
+    const lpmMatch = latestText.match(LPM_PATTERN) || findLatestMatchInMessages(userTexts, LPM_PATTERN);
     if (lpmMatch) state.flow_m3h = Math.round(parseFloat(lpmMatch[1]) * 0.06 * 1000) / 1000;
-    const lpsMatch = allText.match(LPS_PATTERN);
+    const lpsMatch = latestText.match(LPS_PATTERN) || findLatestMatchInMessages(userTexts, LPS_PATTERN);
     if (lpsMatch) state.flow_m3h = Math.round(parseFloat(lpsMatch[1]) * 3.6 * 1000) / 1000;
   }
   if (!state.head_m) {
-    const ftMatch = allText.match(FT_HEAD_PATTERN);
+    const ftMatch = latestText.match(FT_HEAD_PATTERN) || findLatestMatchInMessages(userTexts, FT_HEAD_PATTERN);
     if (ftMatch) state.head_m = Math.round(parseFloat(ftMatch[1]) * 0.3048 * 1000) / 1000;
   }
 
   // Motor power extraction (hp or kW — for power-only matching)
-  const hpMatch = allText.match(HP_PATTERN);
+  // Reverse search so the latest power value wins (e.g., if user corrects "2 kW motor" to "3 kW motor")
+  const hpMatch = findLatestMatchInMessages(userTexts, HP_PATTERN);
   if (hpMatch) state.motor_kw = Math.round(parseFloat(hpMatch[1]) * 0.7457 * 1000) / 1000;
-  const motorKwMatch = allText.match(MOTOR_KW_PATTERN);
+  const motorKwMatch = findLatestMatchInMessages(userTexts, MOTOR_KW_PATTERN);
   if (motorKwMatch) state.motor_kw = parseFloat(motorKwMatch[1]);
 
-  // Floor count → infer building size
-  const floorsMatch = allText.match(FLOORS_PATTERN);
+  // Floor count → infer building size (latest message wins — user may correct floor count)
+  const floorsMatch = findLatestMatchInMessages(userTexts, FLOORS_PATTERN);
   if (floorsMatch) {
     state.floors = parseInt(floorsMatch[1], 10);
     if (!state.buildingSize) {
@@ -308,8 +334,8 @@ export function extractIntent(messages: Array<{ role: string; content: string }>
     }
   }
 
-  // Bathroom count
-  const bathroomMatch = allText.match(BATHROOM_PATTERN);
+  // Bathroom count (reverse search so latest correction wins)
+  const bathroomMatch = findLatestMatchInMessages(userTexts, BATHROOM_PATTERN);
   if (bathroomMatch) state.bathrooms = parseInt(bathroomMatch[1], 10);
 
   // Water source — latest message takes priority (user may correct mains → well mid-conversation)
@@ -459,40 +485,37 @@ export function getNextAction(
   state: ConversationState,
   latestMessage?: string,
   lastEngineAction?: "recommend" | "ask" | "greet",
-  energyOptions?: { co2Override?: number }
+  energyOptions?: { co2Override?: number },
+  hadRecommendation?: boolean
 ): EngineResult {
   // ─── Post-recommendation feedback handling ─────────────────────
-  // If last turn was a recommendation (or an ask that followed a recommendation),
-  // and the user's message has no new extractable pump specs,
-  // treat it as conversational feedback rather than re-recommending the same pumps.
-  if (latestMessage && lastEngineAction === "recommend") {
-    // Post-recommendation feedback guard: only fires when the PREVIOUS action was a recommendation.
-    // The old "ask + flow/head" case was removed — it incorrectly assumed that having flow+head
-    // after an "ask" meant a recommendation was shown before, which is false when the estimate gate
-    // was asking the questions. This caused "35 m³/h, 10 m" to be swallowed as "feedback" instead
-    // of triggering a recommendation.
-    const inPostRecFeedbackMode = true; // always true here (guard is inside lastEngineAction="recommend" check)
+  // Guard fires when:
+  //   (a) the immediately previous turn was a recommendation, OR
+  //   (b) a recommendation was shown at any earlier point (hadRecommendation=true)
+  //       even if subsequent clarifying questions changed lastEngineAction to "ask".
+  // This prevents the engine from re-running with stale old specs when the user
+  // says "Too expensive" or "Show me alternatives" after a clarifying turn.
+  const inPostRecMode = !!latestMessage && (lastEngineAction === "recommend" || !!hadRecommendation);
 
-    if (inPostRecFeedbackMode) {
-      const hasNewInfo =
-        /\d+\s*(?:floor|stor|m[³3]\/h|m\s+head|bathroom|kw|gpm|lpm|lps)\b/i.test(latestMessage) ||
-        // Encoding-robust flow detection — m³/h can appear as mÂ³/h or m3/h in some systems
-        /\b\d+(?:\.\d+)?\s*m[^a-z\s]*[\/]h\b/i.test(latestMessage) ||
-        /\b(heating|cooling|wastewater|dosing|water[\s-]supply|boiler|chiller|irrigat|borehole|well[\s-]pump)\b/i.test(latestMessage) ||
-        /\b(wilo|ksb|xylem|lowara|dab|pedrollo|ebara|flygt|grundfos)\b/i.test(latestMessage) ||
-        /\b(small|medium|large)\s*(building|office|house|home|unit|floor)?\b/i.test(latestMessage);
+  if (inPostRecMode) {
+    const hasNewInfo =
+      /\d+\s*(?:floor|stor|m[³3]\/h|m\s+head|bathroom|kw|gpm|lpm|lps)\b/i.test(latestMessage!) ||
+      // Encoding-robust flow detection — m³/h can appear as mÂ³/h or m3/h in some systems
+      /\b\d+(?:\.\d+)?\s*m[^a-z\s]*[\/]h\b/i.test(latestMessage!) ||
+      /\b(heating|cooling|wastewater|dosing|water[\s-]supply|boiler|chiller|irrigat|borehole|well[\s-]pump)\b/i.test(latestMessage!) ||
+      /\b(wilo|ksb|xylem|lowara|dab|pedrollo|ebara|flygt|grundfos)\b/i.test(latestMessage!) ||
+      /\b(small|medium|large)\s*(building|office|house|home|unit|floor)?\b/i.test(latestMessage!);
 
-      if (!hasNewInfo) {
-        return {
-          action: "ask",
-          questionContext:
-            lastEngineAction === "recommend"
-              ? "The user just saw pump recommendations and replied with feedback or a comment (e.g. 'doesn't look good', 'too expensive', 'not what I need'). Ask what specifically they want changed — price, pump type, performance specs, or see alternatives? Keep it conversational."
-              : "The user is still refining their requirements after seeing pump recommendations. They haven't given new duty point specs yet. Ask what they'd like to change — building size, flow/pressure, budget, or see different options?",
-          suggestions: ["Too expensive", "Wrong pump type", "Need different specs", "Show more options"],
-          state,
-        };
-      }
+    if (!hasNewInfo) {
+      return {
+        action: "ask",
+        questionContext:
+          lastEngineAction === "recommend"
+            ? "The user just saw pump recommendations and replied with feedback or a comment (e.g. 'doesn't look good', 'too expensive', 'not what I need'). Ask what specifically they want changed — price, pump type, performance specs, or see alternatives? Keep it conversational."
+            : "The user is still refining their requirements after seeing pump recommendations. They haven't given new duty point specs yet. Ask what they'd like to change — building size, flow/pressure, budget, or see different options?",
+        suggestions: ["Too expensive", "Wrong pump type", "Need different specs", "Show more options"],
+        state,
+      };
     }
     // Has new info → fall through so the engine re-recommends with updated state
   }
@@ -971,11 +994,28 @@ function matchPumpsByDutyPoint(
 
     const totalScore = oversizeScore + appPenalty + eeiScore - (totalPrefBonus * 0.5);
 
-    return { pump, score: totalScore, confidence, label, flowRatio, headRatio };
+    return { pump, score: totalScore, confidence, label, flowRatio, headRatio, appMatch };
   });
 
   scored.sort((a, b) => a.score - b.score);
-  return scored.slice(0, 3).map((s) => ({ pump: s.pump, confidence: s.confidence, label: s.label }));
+
+  // Application-match priority: always show correct-domain pumps ahead of wrong-domain ones.
+  // This prevents industrial/multistage pumps (CM, CR) from appearing in heating/cooling results
+  // just because few candidates pass the physical filter. Non-matched pumps are only included if
+  // there aren't 3 app-matched candidates (prevents empty results for niche applications).
+  const appMatched = scored.filter((s) => s.appMatch);
+  const notMatched = scored.filter((s) => !s.appMatch);
+  const topScored = appMatched.length >= 3
+    ? appMatched.slice(0, 3)
+    : [...appMatched, ...notMatched].slice(0, 3);
+
+  // Rank-based confidence deduction: 1st=raw, 2nd=−3, 3rd=−6
+  // Prevents misleading "99%/99%" when two pumps both happen to max out the confidence band.
+  return topScored.map((s, idx) => ({
+    pump: s.pump,
+    confidence: Math.max(40, s.confidence - idx * 3),
+    label: s.label,
+  }));
 }
 
 // ─── Build Recommendation ────────────────────────────────────────────

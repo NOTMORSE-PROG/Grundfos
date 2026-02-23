@@ -16,12 +16,13 @@ interface ChatRequest {
   sessionId: string;
   history?: Array<{ role: string; content: string }>;
   lastEngineAction?: string;
+  hadRecommendation?: boolean;
 }
 
 export async function POST(request: NextRequest) {
   try {
     const body: ChatRequest = await request.json();
-    const { message, conversationId, sessionId, history: clientHistory, lastEngineAction: clientLastEngineAction } = body;
+    const { message, conversationId, sessionId, history: clientHistory, lastEngineAction: clientLastEngineAction, hadRecommendation: clientHadRecommendation } = body;
 
     if (!message || !sessionId) {
       return new Response(
@@ -83,20 +84,29 @@ export async function POST(request: NextRequest) {
       { role: "user", content: message },
     ];
 
-    // Detect last engine action — for post-recommendation feedback handling
-    // For signed-in users: read from Supabase message metadata
-    // For guests: read from client-provided lastEngineAction (sent from Zustand store)
+    // Detect last engine action + whether any recommendation was ever shown.
+    // For signed-in users: read from Supabase message metadata (full history scan).
+    // For guests: read from client-provided values (sent from Zustand store).
     let lastEngineAction: "recommend" | "ask" | "greet" | undefined;
+    let hadRecommendation = false;
     for (let i = historyMessages.length - 1; i >= 0; i--) {
       const m = historyMessages[i];
       if (m.role === "assistant" && m.metadata?.engineAction) {
-        lastEngineAction = m.metadata.engineAction as typeof lastEngineAction;
-        break;
+        if (!lastEngineAction) {
+          lastEngineAction = m.metadata.engineAction as "recommend" | "ask" | "greet";
+        }
+        if (m.metadata.engineAction === "recommend") {
+          hadRecommendation = true;
+          break;
+        }
       }
     }
-    // Guest fallback: use client-provided value if Supabase didn't have it
+    // Guest fallback: use client-provided values if Supabase didn't have them
     if (!lastEngineAction && clientLastEngineAction) {
       lastEngineAction = clientLastEngineAction as "recommend" | "ask" | "greet";
+    }
+    if (!hadRecommendation && clientHadRecommendation) {
+      hadRecommendation = clientHadRecommendation;
     }
 
     // Run LLM intent extraction, regex extraction, and live CO2 fetch in parallel
@@ -112,9 +122,15 @@ export async function POST(request: NextRequest) {
     // Merge: regex wins where it found something (reliable for exact specs)
     // LLM fills gaps where regex found nothing (handles natural language)
     // Exception: qualitative fields (buildingSize, waterSource) — LLM also wins when latest
-    // message explicitly contains correction keywords (catches paraphrases the regex misses)
+    // message explicitly contains correction keywords (catches paraphrases the regex misses).
+    // Exception for specs: LLM wins when the latest message has explicit new specs that differ
+    // from the regex state (handles mÂ³/h encoding where regex may still miss the new value).
     const latestHasBuildingSize = /\b(small|medium|large)\b/i.test(message);
     const latestHasWaterSource = /\b(mains|tap|city\s+water|well|borehole|tank|cistern|reservoir)\b/i.test(message);
+    // Detect if the latest message contains explicit flow/head specs (encoding-robust)
+    const latestHasFlow = /\b\d+(?:\.\d+)?\s*m.{0,2}[\/]h\b/i.test(message) || /\b\d+(?:\.\d+)?\s*(?:m3\/h|gpm|lpm|l\/s)\b/i.test(message);
+    const latestHasHead = /\b\d+(?:\.\d+)?\s*m\b(?!\s*[³3\/Â])/i.test(message);
+    const latestHasMotor = /\b\d+(?:\.\d+)?\s*kW\b/i.test(message);
     const state: ConversationState = {
       ...regexState,
       ...(llmIntent.application && !regexState.application && { application: llmIntent.application }),
@@ -122,9 +138,10 @@ export async function POST(request: NextRequest) {
       ...(llmIntent.floors != null && !regexState.floors && { floors: llmIntent.floors }),
       ...(llmIntent.bathrooms != null && !regexState.bathrooms && { bathrooms: llmIntent.bathrooms }),
       ...(llmIntent.waterSource && (!regexState.waterSource || latestHasWaterSource) && { waterSource: llmIntent.waterSource }),
-      ...(llmIntent.flow_m3h != null && !regexState.flow_m3h && { flow_m3h: llmIntent.flow_m3h }),
-      ...(llmIntent.head_m != null && !regexState.head_m && { head_m: llmIntent.head_m }),
-      ...(llmIntent.motor_kw != null && !regexState.motor_kw && { motor_kw: llmIntent.motor_kw }),
+      // Specs: LLM wins if regex missed it OR if the latest message has updated specs
+      ...(llmIntent.flow_m3h != null && (!regexState.flow_m3h || latestHasFlow) && { flow_m3h: llmIntent.flow_m3h }),
+      ...(llmIntent.head_m != null && (!regexState.head_m || latestHasHead) && { head_m: llmIntent.head_m }),
+      ...(llmIntent.motor_kw != null && (!regexState.motor_kw || latestHasMotor) && { motor_kw: llmIntent.motor_kw }),
       ...(llmIntent.existingPumpBrand && !regexState.existingPumpBrand && { existingPumpBrand: llmIntent.existingPumpBrand }),
       ...(llmIntent.existingPump && !regexState.existingPump && { existingPump: llmIntent.existingPump }),
       ...(llmIntent.problem && !regexState.problem && { problem: llmIntent.problem }),
@@ -143,7 +160,7 @@ export async function POST(request: NextRequest) {
     const detectedDomain = detectEvalDomain(allText);
     if (detectedDomain) state.evalDomain = detectedDomain;
 
-    let engineResult: EngineResult = getNextAction(state, message, lastEngineAction, { co2Override: gridData.co2 });
+    let engineResult: EngineResult = getNextAction(state, message, lastEngineAction, { co2Override: gridData.co2 }, hadRecommendation);
 
     // Handle 0 pump matches — fall back to asking for more info
     if (
