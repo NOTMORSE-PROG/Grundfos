@@ -210,6 +210,8 @@ export function detectEvalDomain(queryText: string): string | undefined {
   if (/wu-domestic|domestic\s+service/i.test(queryText)) return "WU-Domestic";
   if (/wu-irrigation|irrigation\s+service/i.test(queryText)) return "WU-Irrigation";
   if (/wu-boosting|water\s+utility/i.test(queryText)) return "WU";
+  // Industrial coolant/process cooling → route to IN domain (MTH/CR/CM)
+  if (/coolant|process[\s-]?cool(?:ing)?|industrial\s+cool/i.test(queryText)) return "IN";
   return undefined;
 }
 
@@ -434,6 +436,11 @@ function calculateConfidence(
   if (oversizeFactor > 3) base -= (oversizeFactor - 3) * 15;
   // Penalty for undersizing (flow or head)
   if (oversizeFactor < 0.9) base -= (0.9 - oversizeFactor) * 40;
+  // Independent flow check: pump's max flow can't reach required rate → steep penalty.
+  // The oversizeFactor uses max(flowRatio, headRatio) which masks flow undersizing when
+  // headRatio >= 1.0. UPM3 at flowRatio=0.889 would show 99% without this check because
+  // its headRatio=1.22 keeps oversizeFactor in the "fine" range.
+  if (flowRatio < 0.95) base -= (0.95 - flowRatio) * 80;
   // Independent head check: pump physically can't deliver required pressure → steep penalty
   // (separate from the oversizeFactor calculation — catches the MAGNA3 case)
   if (headRatio < 0.95) base -= (0.95 - headRatio) * 80;
@@ -894,11 +901,29 @@ function matchPumpsByDutyPoint(
   const requiredFlow = dutyPoint.estimated_flow_m3h;
   const requiredHead = dutyPoint.estimated_head_m;
 
-  // Family preferences: merge application defaults with eval domain overrides
+  // Dynamic sub-domain inference when no explicit eval domain is provided.
+  // Heating/cooling requirements split naturally into two scales:
+  //   DBS-Heating  (<6 m³/h)  — residential wet-rotor circulators (ALPHA2, UPM3 …)
+  //   CBS          (≥15 m³/h) — commercial flanged HVAC pumps (MAGNA1/3, TP …)
+  // This makes real-chat recommendations consistent with the eval domain paths,
+  // even when the user doesn't type explicit keywords like "cbs-hvac" or "dbs-heating".
+  let effectiveDomain = evalDomain;
+  if (!effectiveDomain) {
+    if (application === "heating" || application === "cooling") {
+      if (requiredFlow < 6) effectiveDomain = "DBS-Heating";
+      else if (requiredFlow >= 15) effectiveDomain = "CBS";
+    }
+    // Tiny domestic flow+head = hot water recirculation → DBS-HotWater (UP/UPS/COMFORT)
+    if (application === "domestic_water" && requiredFlow < 3 && requiredHead < 5) {
+      effectiveDomain = "DBS-HotWater";
+    }
+  }
+
+  // Family preferences: merge application defaults with domain overrides
   const appPrefs = FAMILY_PREFERENCE[application] || {};
-  const domainPrefs = evalDomain ? (DOMAIN_PREFERENCE[evalDomain] || {}) : {};
-  // Domain prefs take priority when evalDomain is known
-  const preferences = evalDomain
+  const domainPrefs = effectiveDomain ? (DOMAIN_PREFERENCE[effectiveDomain] || {}) : {};
+  // Domain prefs take priority when a domain is known (explicit or inferred)
+  const preferences = effectiveDomain
     ? { ...appPrefs, ...domainPrefs }
     : appPrefs;
   // Water source bonus: if "well", boost borehole families
@@ -940,7 +965,9 @@ function matchPumpsByDutyPoint(
 
   const appKeywords: Record<string, string[]> = {
     heating: ["heating", "circulator", "hvac"],
-    cooling: ["cooling", "circulator", "hvac", "air conditioning"],
+    // "cooling system" matches MAGNA3/MAGNA1/TP ("Cooling systems") but NOT CR 5-5 ("Cooling water")
+    // or MTH ("Process cooling"). "coolant" matches MTH's "Industrial coolant" correctly.
+    cooling: ["cooling system", "coolant", "hvac", "circulator", "air conditioning"],
     water_supply: ["water supply", "pressure boosting", "multistage", "booster", "irrigation"],
     domestic_water: ["domestic", "booster", "residential", "self-priming"],
     wastewater: ["wastewater", "sewage", "drainage"],
@@ -957,18 +984,31 @@ function matchPumpsByDutyPoint(
 
     // Rated-point scoring: when a pump's rated operating point is known and covers
     // the required flow, score against that point (ideal=1.0) rather than max specs (ideal=1.2).
-    // This correctly penalises pumps whose rated duty is far from the requirement
-    // (e.g. MAGNA3 rated@38/10 scores poorly for a 30/12 duty point).
+    // Upper bound (2.5×): if the rated flow is >2.5× the requirement the pump's BEP is far from
+    // the duty — e.g. TP 40-230/2 rated@12 m³/h for a 3.6 m³/h need should NOT benefit from
+    // rated-point scoring. Without the cap, TP would score artificially well for DBS circulator duties.
     const ratedFlow = safeNumber(pump.specs.rated_flow_m3h);
     const ratedHead = safeNumber(pump.specs.rated_head_m);
     const useRatedPoint = ratedFlow !== null && ratedHead !== null
       && ratedFlow >= requiredFlow * 0.95
-      && ratedHead >= requiredHead * 0.95;
+      && ratedHead >= requiredHead * 0.95
+      && ratedFlow <= requiredFlow * 2.5;  // BEP must be within 2.5× of requirement
 
     const scoringFlow = useRatedPoint ? (ratedFlow / requiredFlow) : flowRatio;
     const scoringHead = useRatedPoint ? (ratedHead / requiredHead) : headRatio;
     const idealRatio  = useRatedPoint ? 1.0 : 1.2;
-    const oversizeScore = Math.abs(scoringFlow - idealRatio) + Math.abs(scoringHead - idealRatio);
+
+    // Head scoring — asymmetric when flow is undersized:
+    // When a pump can't reach the required flow (flowRatio < 1.0), head margin is a BENEFIT
+    // (more head capacity = better circuit coverage), not a penalty.
+    // This makes ALPHA2 (maxHead=8m) correctly preferred over UPM3 (maxHead=5.5m) for a 4.5m
+    // duty when both are slightly undersized in flow — UPM3's thin 5.5m margin is a liability,
+    // ALPHA2's 8m margin means it handles real-world circuit variations safely.
+    const headScore = flowRatio < 1.0
+      ? Math.max(0, idealRatio - scoringHead) - Math.max(0, scoringHead - idealRatio) * 0.15
+      : Math.abs(scoringHead - idealRatio);
+
+    const oversizeScore = Math.abs(scoringFlow - idealRatio) + headScore;
 
     const appText = [...(pump.applications || []), pump.type, pump.category].join(" ").toLowerCase();
     const appMatch = keywords.some((kw) => appText.includes(kw));
@@ -1009,13 +1049,15 @@ function matchPumpsByDutyPoint(
     ? appMatched.slice(0, 3)
     : [...appMatched, ...notMatched].slice(0, 3);
 
-  // Rank-based confidence deduction: 1st=raw, 2nd=−3, 3rd=−6
-  // Prevents misleading "99%/99%" when two pumps both happen to max out the confidence band.
-  return topScored.map((s, idx) => ({
-    pump: s.pump,
-    confidence: Math.max(40, s.confidence - idx * 3),
-    label: s.label,
-  }));
+  // Rank-based confidence: each lower-ranked pump shows at most (previous - 3)%.
+  // Using a running cap (not just idx*3) prevents inversions where a pump with a higher raw
+  // confidence appears at a lower rank but shows a bigger percentage than the winner.
+  let prevConf = 100;
+  return topScored.map((s) => {
+    const displayConf = Math.max(40, Math.min(prevConf - (prevConf < 100 ? 3 : 0), s.confidence));
+    prevConf = displayConf;
+    return { pump: s.pump, confidence: displayConf, label: s.label };
+  });
 }
 
 // ─── Build Recommendation ────────────────────────────────────────────
