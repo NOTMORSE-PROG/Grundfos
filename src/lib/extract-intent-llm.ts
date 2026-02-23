@@ -18,6 +18,9 @@ const EXTRACTION_SYSTEM_PROMPT = `Extract pump requirements from this conversati
 All fields are optional — omit any field that is not clearly stated (do NOT set it to null, just leave it out).
 CRITICAL: If the latest user message contains no pump-related information (e.g. greetings, vague questions, filler words), output exactly: {}
 Never infer or guess an application type from a vague or generic message. An empty {} is always better than a wrong guess.
+CRITICAL for 'application': Only include it if the user EXPLICITLY states the use case (e.g., "for heating", "HVAC", "water supply", "my well", "cooling system"). Phrases like "right-size my pump", "save energy on pumping", "help me choose a pump", "replace my pump" do NOT imply a specific application — omit the field in those cases.
+CRITICAL for 'floors': Only include a floor count when the user EXPLICITLY states it as a number (e.g., "10-story building", "our 5-floor office", "tatlong palapag", "3 floors"). Building size descriptors like "large office building", "big factory", "tall building", "high-rise" do NOT imply a specific floor count — omit 'floors' in those cases and only set 'buildingSize'.
+IMPORTANT: If the latest user message CORRECTS or UPDATES a previous value (e.g., "i need it for small office" overrides an earlier "large office building"), extract the UPDATED value — the latest message takes priority over earlier messages.
 
 Fields:
 - application: "heating" | "cooling" | "domestic_water" | "water_supply" | "wastewater" | "dosing"

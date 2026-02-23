@@ -15,6 +15,14 @@ export interface ROISummary {
   ten_year_savings: number;
   lifecycle_cost: number;
   efficiency_improvement_pct: number;
+  /** The baseline (existing/industry-average) pump power used in the calculation (kW) */
+  old_power_kw: number;
+  /** The recommended pump's rated power used in the calculation (kW) */
+  new_power_kw: number;
+  /** Operating hours per year used in the calculation */
+  operating_hours: number;
+  /** Annual energy saved in kWh (old_kwh - new_kwh) */
+  annual_kwh_savings: number;
 }
 
 export function calcAnnualEnergyCost(pump: PumpCalcInput): number {
@@ -96,6 +104,10 @@ export function calcROISummary(
     ten_year_savings,
     lifecycle_cost,
     efficiency_improvement_pct,
+    old_power_kw: oldPump.power_kw,
+    new_power_kw: newPump.power_kw,
+    operating_hours: oldPump.operating_hours,
+    annual_kwh_savings: old_kwh - new_kwh,
   };
 }
 
@@ -113,7 +125,7 @@ export const DEFAULT_ENERGY_RATES: Record<
   string,
   { rate: number; co2: number; currency: string }
 > = {
-  PH: { rate: 9.5, co2: 0.52, currency: "PHP" },
+  PH: { rate: 13.1734, co2: 0.62, currency: "PHP" }, // Meralco Feb 2026 (₱13.1734/kWh); CO2 midpoint — overridden by live Electricity Maps API at runtime
   US: { rate: 0.12, co2: 0.42, currency: "USD" },
   EU: { rate: 0.25, co2: 0.3, currency: "EUR" },
   global: { rate: 0.15, co2: 0.42, currency: "USD" },

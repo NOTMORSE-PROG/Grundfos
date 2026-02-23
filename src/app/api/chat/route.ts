@@ -5,6 +5,7 @@ import { getServiceClient } from "@/lib/supabase";
 import { extractIntent, getNextAction, detectEvalDomain, type EngineResult, type RecommendedPump, type ConversationState } from "@/lib/recommendation-engine";
 import { parseMessageMetadata } from "@/lib/parse-message-metadata";
 import { extractIntentWithLLM } from "@/lib/extract-intent-llm";
+import { getLiveCarbonIntensity } from "@/lib/carbon-intensity";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -98,23 +99,29 @@ export async function POST(request: NextRequest) {
       lastEngineAction = clientLastEngineAction as "recommend" | "ask" | "greet";
     }
 
-    // Run LLM-based intent extraction and regex extraction in parallel
+    // Run LLM intent extraction, regex extraction, and live CO2 fetch in parallel
     // LLM understands natural language, paraphrases, and Filipino/Tagalog
     // Regex is fast and precise for exact numbers (flow, head, power)
-    const [llmIntent, regexState] = await Promise.all([
+    // CO2 fetch is cached (15 min) — no latency impact after first request
+    const [llmIntent, regexState, gridData] = await Promise.all([
       extractIntentWithLLM(groq, allMessages),
       Promise.resolve(extractIntent(allMessages)),
+      getLiveCarbonIntensity(),
     ]);
 
     // Merge: regex wins where it found something (reliable for exact specs)
     // LLM fills gaps where regex found nothing (handles natural language)
+    // Exception: qualitative fields (buildingSize, waterSource) — LLM also wins when latest
+    // message explicitly contains correction keywords (catches paraphrases the regex misses)
+    const latestHasBuildingSize = /\b(small|medium|large)\b/i.test(message);
+    const latestHasWaterSource = /\b(mains|tap|city\s+water|well|borehole|tank|cistern|reservoir)\b/i.test(message);
     const state: ConversationState = {
       ...regexState,
       ...(llmIntent.application && !regexState.application && { application: llmIntent.application }),
-      ...(llmIntent.buildingSize && !regexState.buildingSize && { buildingSize: llmIntent.buildingSize }),
+      ...(llmIntent.buildingSize && (!regexState.buildingSize || latestHasBuildingSize) && { buildingSize: llmIntent.buildingSize }),
       ...(llmIntent.floors != null && !regexState.floors && { floors: llmIntent.floors }),
       ...(llmIntent.bathrooms != null && !regexState.bathrooms && { bathrooms: llmIntent.bathrooms }),
-      ...(llmIntent.waterSource && !regexState.waterSource && { waterSource: llmIntent.waterSource }),
+      ...(llmIntent.waterSource && (!regexState.waterSource || latestHasWaterSource) && { waterSource: llmIntent.waterSource }),
       ...(llmIntent.flow_m3h != null && !regexState.flow_m3h && { flow_m3h: llmIntent.flow_m3h }),
       ...(llmIntent.head_m != null && !regexState.head_m && { head_m: llmIntent.head_m }),
       ...(llmIntent.motor_kw != null && !regexState.motor_kw && { motor_kw: llmIntent.motor_kw }),
@@ -123,12 +130,20 @@ export async function POST(request: NextRequest) {
       ...(llmIntent.problem && !regexState.problem && { problem: llmIntent.problem }),
     };
 
+    // If an explicit floor count was extracted, update buildingSize to match —
+    // this corrects "large office building" (→ Large) being overridden by "3-4 floors" (→ Small)
+    // when the user gives a precise floor count that contradicts their earlier size descriptor.
+    if (state.floors != null && !latestHasBuildingSize) {
+      const f = state.floors;
+      state.buildingSize = f <= 3 ? "small" : f <= 8 ? "medium" : "large";
+    }
+
     // Apply domain detection so CBS/DBS/IN/WU preference bonuses fire in chat (same as eval path)
     const allText = allMessages.map((m) => m.content).join(" ");
     const detectedDomain = detectEvalDomain(allText);
     if (detectedDomain) state.evalDomain = detectedDomain;
 
-    let engineResult: EngineResult = getNextAction(state, message, lastEngineAction);
+    let engineResult: EngineResult = getNextAction(state, message, lastEngineAction, { co2Override: gridData.co2 });
 
     // Handle 0 pump matches — fall back to asking for more info
     if (
@@ -225,7 +240,9 @@ export async function POST(request: NextRequest) {
       const monthlySavings = topPump
         ? `₱${Math.round(topPump.roi.annual_savings / 12).toLocaleString()}/month`
         : "";
-      const pumpNames = engineResult.pumps?.map((p) => p.model).join(" and ") || "matched pumps";
+      // Separate top pump from alternates — prevents LLM from confusing which is primary
+      const topPumpName = topPump?.model || "matched pump";
+      const alternatePumps = engineResult.pumps?.slice(1).map((p) => p.model) || [];
       const app = state.application?.replace(/_/g, " ") || "their system";
       const confidence = topPump?.matchConfidence ? `${topPump.matchConfidence}% match` : "";
 
@@ -233,18 +250,37 @@ export async function POST(request: NextRequest) {
         ? `\nTheir current pump: ${topPump.comparedTo}. This is a direct Grundfos equivalent.`
         : "";
 
+      // Detect re-recommendation after user updated their specs (e.g., "small office" after "large")
+      const isReRecommend = lastEngineAction === "recommend" && engineResult.action === "recommend";
+
+      // Build rich user context so LLM can give specific, personalised responses
+      const dp = engineResult.dutyPoint;
+      const specsAreUserProvided = state.flow_m3h != null && state.head_m != null;
+      const dutyLine = dp
+        ? `Duty point: ${dp.estimated_flow_m3h} m³/h at ${dp.estimated_head_m} m head (${specsAreUserProvided ? "user-provided exact specs" : "estimated from building parameters"})`
+        : "";
+      const buildingLine = [
+        state.buildingSize && `${state.buildingSize} building`,
+        state.floors && `${state.floors} floors`,
+        state.problem && `problem: ${state.problem.replace(/_/g, " ")}`,
+      ].filter(Boolean).join(", ");
+
       chatMessages.push({
         role: "system",
         content: `${basePrompt}
 
-Context: The user needs a pump for their ${app} system.
-You are recommending: ${pumpNames}. ${confidence ? `(${confidence})` : ""}
-The top pick saves approximately ${savings} (${monthlySavings}) in energy costs.${competitorContext}
+User's system: ${app}${buildingLine ? ` — ${buildingLine}` : ""}.
+${dutyLine}
+PUMP NAMES — copy these EXACTLY, character for character:
+  • Best Match (primary recommendation): ${topPumpName}${confidence ? ` — ${confidence}` : ""}
+${alternatePumps.length > 0 ? `  • Also visible as alternatives: ${alternatePumps.join(", ")}` : ""}
+Best Match saves approximately ${savings} (${monthlySavings}) vs a typical oversized installation.${competitorContext}
 ${topPump?.oversizingNote || ""}
-The detailed specs and ROI are shown in cards below — just write a warm, natural explanation.`,
+Specs and ROI are in cards below — write a warm, specific 2-3 sentence explanation that references their actual situation (building type, problem, or specs).
+CRITICAL: Your response MUST name ${topPumpName} as the primary recommendation. Do NOT name any alternative as the top pick. These model names are the ONLY valid ones — never invent, abbreviate, or substitute.${isReRecommend ? `\nUser just updated their requirements — start with a brief 1-sentence acknowledgment of what changed, then explain ${topPumpName}.` : ""}`,
       });
-      // Include history so LLM has conversational context
-      for (const msg of effectiveHistory) {
+      // Limit history to last 4 messages — prevents old pump names from bleeding into LLM response
+      for (const msg of effectiveHistory.slice(-4)) {
         chatMessages.push({
           role: msg.role as "user" | "assistant",
           content: msg.content,
@@ -365,6 +401,16 @@ The detailed specs and ROI are shown in cards below — just write a warm, natur
 
           // Always send engineAction so client can track post-recommendation state (for guests)
           metadata.engineAction = engineResult.action;
+
+          // Live grid data — always included so the frontend can show the CO2/rate badge
+          metadata.gridData = {
+            co2: gridData.co2,
+            isLive: gridData.isLive,
+            gCO2perKwh: gridData.gCO2perKwh,
+            updatedAt: gridData.updatedAt,
+            ratePhp: gridData.ratePhp,
+            rateLabel: gridData.rateLabel,
+          };
 
           // Use AI-generated suggestions for ask/greet; engine suggestions for recommend
           const finalSuggestions = aiSuggestions.length > 0

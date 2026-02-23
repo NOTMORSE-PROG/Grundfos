@@ -33,6 +33,9 @@ interface ROISummary {
   co2_reduction_tonnes: number;
   ten_year_savings: number;
   efficiency_improvement_pct: number;
+  old_power_kw: number;
+  new_power_kw: number;
+  operating_hours: number;
 }
 
 interface CatalogPump {
@@ -83,7 +86,8 @@ async function generatePDFReport(pump: CatalogPump) {
   if (!roi) return;
 
   const pumpCostPhp = parsePrice(pump.price_range_usd) * 56;
-  const existingPowerEstimate = roi.old_annual_cost / (9.5 * 3500);
+  // Use the power the engine actually calculated — avoids wrong hardcoded rate/hours
+  const existingPowerEstimate = roi.old_power_kw ?? roi.old_annual_cost / (13.1734 * (roi.operating_hours ?? 3500));
 
   const response = await fetch("/api/report", {
     method: "POST",

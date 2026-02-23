@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useRef, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { ArrowUp, Square } from "lucide-react";
@@ -10,7 +10,8 @@ interface ChatInputProps {
   onSend: (message: string) => void;
   isStreaming: boolean;
   onStop?: () => void;
-  initialValue?: string;
+  value: string;
+  onValueChange: (v: string) => void;
   onImageProcessed?: (result: {
     imageUrl: string;
     ocrText: string;
@@ -22,15 +23,16 @@ export function ChatInput({
   onSend,
   isStreaming,
   onStop,
-  initialValue,
+  value,
+  onValueChange,
   onImageProcessed,
 }: ChatInputProps) {
-  const [input, setInput] = useState(initialValue || "");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  if (initialValue && input !== initialValue) {
-    setInput(initialValue);
-  }
+  // Auto-focus on mount
+  useEffect(() => {
+    textareaRef.current?.focus();
+  }, []);
 
   // Re-focus when streaming ends so user can type immediately
   useEffect(() => {
@@ -39,16 +41,11 @@ export function ChatInput({
     }
   }, [isStreaming]);
 
-  // Auto-focus on mount
-  useEffect(() => {
-    textareaRef.current?.focus();
-  }, []);
-
   const handleSend = () => {
-    const trimmed = input.trim();
+    const trimmed = value.trim();
     if (!trimmed || isStreaming) return;
     onSend(trimmed);
-    setInput("");
+    onValueChange("");
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto";
       textareaRef.current.focus();
@@ -63,7 +60,7 @@ export function ChatInput({
   };
 
   const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    setInput(e.target.value);
+    onValueChange(e.target.value);
     const textarea = e.target;
     textarea.style.height = "auto";
     textarea.style.height = Math.min(textarea.scrollHeight, 200) + "px";
@@ -80,7 +77,7 @@ export function ChatInput({
 
           <Textarea
             ref={textareaRef}
-            value={input}
+            value={value}
             onChange={handleInputChange}
             onKeyDown={handleKeyDown}
             placeholder="Ask about Grundfos pumps..."
@@ -102,7 +99,7 @@ export function ChatInput({
             <Button
               onClick={handleSend}
               size="icon"
-              disabled={!input.trim()}
+              disabled={!value.trim()}
               className="shrink-0 h-8 w-8 rounded-lg bg-grundfos-blue hover:bg-grundfos-dark disabled:opacity-30"
             >
               <ArrowUp className="h-4 w-4" />

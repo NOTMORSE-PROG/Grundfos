@@ -116,12 +116,15 @@ const SIZE_PATTERNS: Array<{ size: BuildingSize; pattern: RegExp }> = [
   { size: "medium", pattern: /\b(?:(?:1\d|2\d|3\d|4\d|50)[\s-]?(?:room|unit)s?)\b/i },
 ];
 
-const FLOW_PATTERN = /(\d+(?:\.\d+)?)\s*(?:m[³³3]\/h|m3\/h|cubic[\s-]?met(?:er|re)s?[\s-]?per[\s-]?hour|cmh)/i;
+// m³/h can appear as mÂ³/h (UTF-8 double-encoding) or m3/h — match all variants
+const FLOW_PATTERN = /(\d+(?:\.\d+)?)\s*(?:m(?:[³³3]|Â[³3]?)\/h|m3\/h|cubic[\s-]?met(?:er|re)s?[\s-]?per[\s-]?hour|cmh)/i;
 // "X m³/h, Y m" — standard pump duty point notation (flow then head, comma/space separated)
-const DUTY_POINT_PATTERN = /(\d+(?:\.\d+)?)\s*(?:m[³³3]\/h|m3\/h)\s*[,;]?\s*(?:at\s+)?(\d+(?:\.\d+)?)\s*m\b(?!\s*[³3²\/])/i;
+const DUTY_POINT_PATTERN = /(\d+(?:\.\d+)?)\s*(?:m(?:[³³3]|Â[³3]?)\/h|m3\/h)\s*[,;]?\s*(?:at\s+)?(\d+(?:\.\d+)?)\s*m\b(?!\s*[³3²\/Â])/i;
 const HEAD_PATTERN = /(?:at\s+)?(\d+(?:\.\d+)?)\s*(?:met(?:er|re)s?|m)\s*(?:head|of[\s-]?head)/i;
-const HEAD_PATTERN_LOOSE = /(\d+(?:\.\d+)?)\s*m\b(?!\s*[³3²\/])/i;
-const FLOORS_PATTERN = /(\d+)\s*(?:floor|stor(?:e?y|ies))/i;
+// Â added to exclusion — prevents "35 mÂ³/h" from being misread as head=35
+const HEAD_PATTERN_LOOSE = /(\d+(?:\.\d+)?)\s*m\b(?!\s*[³3²\/Â])/i;
+// Matches "3 floors", "3-4 floors", "3 to 4 floors", "10+ floors", "3 storey"
+const FLOORS_PATTERN = /(\d+)(?:\+|[\s-]+(?:to[\s-]+)?\d+)?[\s-]*(?:floor|stor(?:e?y|ies)|palapag)/i;
 const BATHROOM_PATTERN = /(\d+)\s*(?:bathroom|bath(?:room)?s?|toilet|cr\b|restroom|t&b|comfort\s*room)/i;
 
 // Non-SI unit conversion patterns
@@ -249,10 +252,16 @@ export function extractIntent(messages: Array<{ role: string; content: string }>
     state.application = detectApplication(allText);
   }
 
-  // Building size detection
+  // Building size — latest user message takes priority over conversation history.
+  // Users frequently correct building size mid-conversation without explicit correction language
+  // (e.g., "i need it for small office" after previously saying "large office building").
   for (const { size, pattern } of SIZE_PATTERNS) {
-    if (isCorrection && pattern.test(latestText)) { state.buildingSize = size; break; }
-    else if (pattern.test(allText)) { state.buildingSize = size; break; }
+    if (pattern.test(latestText)) { state.buildingSize = size; break; }
+  }
+  if (!state.buildingSize) {
+    for (const { size, pattern } of SIZE_PATTERNS) {
+      if (pattern.test(allText)) { state.buildingSize = size; break; }
+    }
   }
 
   // Exact flow/head specs — try duty-point format first ("X m³/h, Y m"), then individual patterns
@@ -303,9 +312,14 @@ export function extractIntent(messages: Array<{ role: string; content: string }>
   const bathroomMatch = allText.match(BATHROOM_PATTERN);
   if (bathroomMatch) state.bathrooms = parseInt(bathroomMatch[1], 10);
 
-  // Water source
+  // Water source — latest message takes priority (user may correct mains → well mid-conversation)
   for (const { source, pattern } of WATER_SOURCE_PATTERNS) {
-    if (pattern.test(allText)) { state.waterSource = source; break; }
+    if (pattern.test(latestText)) { state.waterSource = source; break; }
+  }
+  if (!state.waterSource) {
+    for (const { source, pattern } of WATER_SOURCE_PATTERNS) {
+      if (pattern.test(allText)) { state.waterSource = source; break; }
+    }
   }
 
   // Problem type detection
@@ -374,14 +388,17 @@ function calculateConfidence(
   appMatch: boolean,
   eei: number,
   prefBonus: number,
-  isVSD = false
+  isVSD = false,
+  hasActualEEI = false  // true only when pump.specs.eei exists in catalog
 ): { score: number; label: string } {
   const rawOversizeFactor = Math.max(flowRatio, headRatio);
   // VSD benefit only applies when the pump CAN physically meet the head requirement.
   // If headRatio < 1.0, the pump can't deliver enough pressure — VSD won't help.
   // Example: MAGNA3 for domestic water — 10× flow oversize but can't meet head → no cap.
   // Example: SCALA2 for domestic water — 3.8× oversize but meets head → cap applies.
-  const oversizeFactor = (isVSD && headRatio >= 1.0)
+  // VSD cap only applies when the pump is ≤3× oversized — massively oversized VSD pumps
+  // still waste energy even with speed control and should not receive inflated confidence.
+  const oversizeFactor = (isVSD && headRatio >= 1.0 && rawOversizeFactor <= 3.0)
     ? Math.min(rawOversizeFactor, 1.8)
     : rawOversizeFactor;
 
@@ -396,8 +413,10 @@ function calculateConfidence(
   if (headRatio < 0.95) base -= (0.95 - headRatio) * 80;
   // Penalty for weak application match
   if (!appMatch) base -= 10;
-  // Reward high efficiency
-  if (eei < 0.23) base += 3;
+  // Reward confirmed class-A efficiency — only when the pump has an actual EEI spec.
+  // Fixed-speed centrifugal pumps (TP, CR, CM) have no EEI rating; they should not
+  // receive this bonus via the 0.2 default which was calibrated for wet-rotor circulators.
+  if (hasActualEEI && eei < 0.23) base += 3;
   // Family preference bonus (scaled down for confidence display)
   base += prefBonus * 0.3;
 
@@ -439,25 +458,41 @@ const SIZE_TO_UNITS: Record<BuildingSize, number> = { small: 4, medium: 30, larg
 export function getNextAction(
   state: ConversationState,
   latestMessage?: string,
-  lastEngineAction?: "recommend" | "ask" | "greet"
+  lastEngineAction?: "recommend" | "ask" | "greet",
+  energyOptions?: { co2Override?: number }
 ): EngineResult {
   // ─── Post-recommendation feedback handling ─────────────────────
-  // If last turn was a recommendation and the user's message has no new extractable
-  // pump info, treat it as conversational feedback rather than re-recommending the same pumps.
-  if (lastEngineAction === "recommend" && latestMessage) {
-    const hasNewInfo =
-      /\d+\s*(?:floor|stor|m[³3]\/h|m\s+head|bathroom|kw|gpm|lpm|lps)\b/i.test(latestMessage) ||
-      /\b(heating|cooling|wastewater|dosing|water[\s-]supply|boiler|chiller|irrigat|borehole|well[\s-]pump)\b/i.test(latestMessage) ||
-      /\b(wilo|ksb|xylem|lowara|dab|pedrollo|ebara|flygt|grundfos)\b/i.test(latestMessage);
+  // If last turn was a recommendation (or an ask that followed a recommendation),
+  // and the user's message has no new extractable pump specs,
+  // treat it as conversational feedback rather than re-recommending the same pumps.
+  if (latestMessage && lastEngineAction === "recommend") {
+    // Post-recommendation feedback guard: only fires when the PREVIOUS action was a recommendation.
+    // The old "ask + flow/head" case was removed — it incorrectly assumed that having flow+head
+    // after an "ask" meant a recommendation was shown before, which is false when the estimate gate
+    // was asking the questions. This caused "35 m³/h, 10 m" to be swallowed as "feedback" instead
+    // of triggering a recommendation.
+    const inPostRecFeedbackMode = true; // always true here (guard is inside lastEngineAction="recommend" check)
 
-    if (!hasNewInfo) {
-      return {
-        action: "ask",
-        questionContext:
-          "The user just saw pump recommendations and replied with feedback or a comment (e.g. 'doesn't look good', 'too expensive', 'not what I need'). Ask what specifically they want changed — price, pump type, performance specs, or see alternatives? Keep it conversational.",
-        suggestions: ["Too expensive", "Wrong pump type", "Need different specs", "Show more options"],
-        state,
-      };
+    if (inPostRecFeedbackMode) {
+      const hasNewInfo =
+        /\d+\s*(?:floor|stor|m[³3]\/h|m\s+head|bathroom|kw|gpm|lpm|lps)\b/i.test(latestMessage) ||
+        // Encoding-robust flow detection — m³/h can appear as mÂ³/h or m3/h in some systems
+        /\b\d+(?:\.\d+)?\s*m[^a-z\s]*[\/]h\b/i.test(latestMessage) ||
+        /\b(heating|cooling|wastewater|dosing|water[\s-]supply|boiler|chiller|irrigat|borehole|well[\s-]pump)\b/i.test(latestMessage) ||
+        /\b(wilo|ksb|xylem|lowara|dab|pedrollo|ebara|flygt|grundfos)\b/i.test(latestMessage) ||
+        /\b(small|medium|large)\s*(building|office|house|home|unit|floor)?\b/i.test(latestMessage);
+
+      if (!hasNewInfo) {
+        return {
+          action: "ask",
+          questionContext:
+            lastEngineAction === "recommend"
+              ? "The user just saw pump recommendations and replied with feedback or a comment (e.g. 'doesn't look good', 'too expensive', 'not what I need'). Ask what specifically they want changed — price, pump type, performance specs, or see alternatives? Keep it conversational."
+              : "The user is still refining their requirements after seeing pump recommendations. They haven't given new duty point specs yet. Ask what they'd like to change — building size, flow/pressure, budget, or see different options?",
+          suggestions: ["Too expensive", "Wrong pump type", "Need different specs", "Show more options"],
+          state,
+        };
+      }
     }
     // Has new info → fall through so the engine re-recommends with updated state
   }
@@ -477,7 +512,7 @@ export function getNextAction(
     if (state.existingPump) {
       // Model known → try to cross-reference
       const crossRef = findCompetitorMatch(state.existingPumpBrand, state.existingPump);
-      if (crossRef) return buildCompetitorRecommendation(state, crossRef);
+      if (crossRef) return buildCompetitorRecommendation(state, crossRef, energyOptions);
     }
     // Brand only (no model) → ask for model or application before recommending
     return {
@@ -493,6 +528,13 @@ export function getNextAction(
 
   // Enough info → recommend (threshold: 8 requires at least app + floors, or app + buildingSize + bathrooms)
   if (quality >= 8) {
+    // Pre-compute estimate bypass flag — used by both estimate transparency gates below.
+    // Matches any explicit confirmation that the user is satisfied with the estimate or wants to proceed.
+    const estimateBypass =
+      /\b(show[\s-]?pump|proceed|go[\s-]?ahead|looks?\s+(right|good|ok|correct|fine)|use\s+(this|estimate|it)|confirm|continue|yes\b|yep\b|sure\b|ok\b|okay\b|correct\b|find[\s-]?pump|recommend|alright|new[\s-]install(?:ation)?|proceed\s+with|that'?s?\s*(right|correct|fine|good))\b/i.test(
+        latestMessage || ""
+      );
+
     // ── Mandatory gate: domestic_water needs physical dimensions ──────────────
     if (state.application === "domestic_water" && !state.floors && !state.bathrooms) {
       if (state.problem === "replacement" && !state.existingPumpBrand) {
@@ -534,6 +576,20 @@ export function getNextAction(
       };
     }
 
+    // ── Mandatory gate: water_supply needs water source (mains booster vs borehole are completely different pumps) ─
+    if (
+      state.application === "water_supply" &&
+      !state.waterSource &&
+      state.flow_m3h == null
+    ) {
+      return {
+        action: "ask",
+        questionContext: "Ask where the water comes from — city/tap water (mains), a rooftop storage tank, or a deep well/borehole? This decides whether to recommend a pressure booster or a submersible pump.",
+        suggestions: ["City / tap water", "Storage tank", "Deep well / borehole"],
+        state,
+      };
+    }
+
     // ── Mandatory gate: water_supply needs floors for head calculation ──────────
     if (
       state.application === "water_supply" &&
@@ -549,6 +605,38 @@ export function getNextAction(
       };
     }
 
+    // ── Transparency gate (water_supply): show estimated duty point before recommending ──
+    // Same principle as the heating/cooling gate: show the estimate, ask user to confirm
+    // or provide better specs — avoids silent wrong-sized recommendations.
+    if (
+      state.application === "water_supply" &&
+      state.floors != null &&
+      state.flow_m3h == null &&
+      state.head_m == null &&
+      !state.motor_kw &&
+      !estimateBypass
+    ) {
+      const floors = state.floors;
+      const units = SIZE_TO_UNITS[state.buildingSize || "small"];
+      const tempDuty = deriveDutyPoint({
+        application: "water_supply",
+        building_type: "generic",
+        floors,
+        units_or_sqm: units,
+      });
+      return {
+        action: "ask",
+        questionContext: `Based on their ${floors}-floor ${state.buildingSize || ""} building, you have estimated a duty point of ${tempDuty.estimated_flow_m3h} m³/h flow at ${tempDuty.estimated_head_m} m head. Show this estimate to the user and ask: is this a new installation (they can confirm to proceed), are they replacing an existing pump (ask for brand/model), or do they have exact flow rate and head from a design document? Be concise — do NOT ask more than one thing.`,
+        suggestions: [
+          "New installation — use this estimate",
+          "Replacing an existing pump",
+          "I have the exact flow & head specs",
+          "The load is actually higher/lower",
+        ],
+        state,
+      };
+    }
+
     // ── Mandatory gate: heating / cooling needs floors for loop head calc ───────
     if (
       (state.application === "heating" || state.application === "cooling") &&
@@ -557,13 +645,62 @@ export function getNextAction(
     ) {
       return {
         action: "ask",
-        questionContext: "Ask how many floors the building has — needed to calculate the correct pump head for the heating/cooling loop.",
+        questionContext: "Ask ONLY how many floors the building has. Answer options are floor ranges like '1-3 floors'. Do NOT ask about location, system type, or anything else.",
         suggestions: ["1-3 floors", "4-6 floors", "7-10 floors", "10+ floors"],
         state,
       };
     }
 
-    return buildRecommendation(state);
+    // ── Gate: heating/cooling replacement needs competitor brand before cross-referencing ──
+    // Prevents the estimate gate from looping when the user clicks "Replacing an existing pump".
+    if (
+      (state.application === "heating" || state.application === "cooling") &&
+      state.problem === "replacement" &&
+      !state.existingPumpBrand
+    ) {
+      return {
+        action: "ask",
+        questionContext: "They want to replace a heating or cooling pump. Ask what brand and model the current pump is — this lets us find the exact Grundfos equivalent.",
+        suggestions: ["Wilo", "KSB", "Grundfos (older model)", "I have the model number"],
+        state,
+      };
+    }
+
+    // ── Transparency gate (heating/cooling): show estimated duty point before recommending ──
+    // When floors are known but no explicit flow/head specs, pre-compute the estimate and
+    // ask the user to confirm it or provide better information — prevents silent wrong estimates.
+    // Bypassed ONLY when the user has explicitly confirmed (bypass keywords) or provided specs.
+    // NOTE: !state.problem intentionally removed — "We are designing" (new_install) does NOT
+    // mean the user has seen/confirmed our estimate. Only explicit bypass words skip this gate.
+    if (
+      (state.application === "heating" || state.application === "cooling") &&
+      state.floors != null &&
+      state.flow_m3h == null &&
+      state.head_m == null &&
+      !estimateBypass
+    ) {
+      const floors = state.floors;
+      const units = SIZE_TO_UNITS[state.buildingSize || "small"];
+      const tempDuty = deriveDutyPoint({
+        application: state.application as BuildingParams["application"],
+        building_type: "generic",
+        floors,
+        units_or_sqm: units,
+      });
+      return {
+        action: "ask",
+        questionContext: `Based on their ${floors}-floor ${state.buildingSize || ""} building, you have estimated a duty point of ${tempDuty.estimated_flow_m3h} m³/h flow at ${tempDuty.estimated_head_m} m head. Show this estimate to the user and ask: is this a new installation (they should confirm to proceed), are they replacing an existing pump (ask for brand/model), or do they have a design document with exact flow rate and head? Be concise — do NOT ask more than one thing.`,
+        suggestions: [
+          "New installation — use this estimate",
+          "Replacing an existing pump",
+          "I have the exact flow & head specs",
+          "The load is actually higher/lower",
+        ],
+        state,
+      };
+    }
+
+    return buildRecommendation(state, energyOptions);
   }
 
   // Not enough info → ask the most valuable missing piece
@@ -572,8 +709,8 @@ export function getNextAction(
       action: "ask",
       questionContext: state.flow_m3h
         ? "They gave flow/pressure specs but haven't said what the system is for. Ask what application — heating, cooling, water supply, or wastewater?"
-        : "Ask what kind of pump system or water problem they're dealing with — heating, water pressure, replacing a pump, etc.",
-      suggestions: ["Heating system", "Cooling / AC", "Water pressure at home", "Replace a pump"],
+        : "Ask what kind of system the pump is for — heating/cooling, water supply, a home or a commercial building? Keep it open and non-assumptive.",
+      suggestions: ["Heating / cooling system", "Water supply / pressure", "Home water system", "Commercial or industrial"],
       state,
     };
   }
@@ -600,7 +737,7 @@ export function getNextAction(
     // Problem known (and not a blind replacement) but missing house size — ask floors only
     return {
       action: "ask",
-      questionContext: "Ask how many floors their house has — this determines the pump head required. Ask specifically about floors, not bathrooms.",
+      questionContext: "Ask how many floors their building or home has — this determines the pump head required. Ask specifically about floors, not bathrooms.",
       suggestions: ["1-2 floors", "3-4 floors", "5-6 floors", "7+ floors"],
       state,
     };
@@ -627,10 +764,19 @@ export function getNextAction(
   }
 
   if (state.application === "heating" || state.application === "cooling") {
+    // Replacement flow: ask for competitor brand before sizing from scratch
+    if (state.problem === "replacement" && !state.existingPumpBrand) {
+      return {
+        action: "ask",
+        questionContext: "They want to replace a heating or cooling pump. Ask what brand and model the current pump is — this lets us find the exact Grundfos equivalent.",
+        suggestions: ["Wilo", "KSB", "Grundfos (older model)", "I have the model number"],
+        state,
+      };
+    }
     if (!state.floors && !state.buildingSize) {
       return {
         action: "ask",
-        questionContext: "Ask how many floors the building has — this is critical for calculating the pump head for the heating/cooling loop.",
+        questionContext: "Ask ONLY how many floors the building has. Answer options are floor ranges like '1-3 floors'. Do NOT ask about location, system type, or anything else.",
         suggestions: ["1-3 floors", "4-6 floors", "7-10 floors", "10+ floors"],
         state,
       };
@@ -639,7 +785,7 @@ export function getNextAction(
     if (!state.floors) {
       return {
         action: "ask",
-        questionContext: "Ask how many floors the building has for the heating/cooling system — needed to size the pump correctly.",
+        questionContext: "Ask ONLY how many floors the building has. Answer options are floor ranges like '1-3 floors'. Do NOT ask about location, system type, or anything else.",
         suggestions: ["1-3 floors", "4-6 floors", "7-10 floors", "10+ floors"],
         state,
       };
@@ -675,7 +821,7 @@ export function getNextAction(
   }
 
   // Have application + some context but quality < 7 — recommend with what we have
-  return buildRecommendation(state);
+  return buildRecommendation(state, energyOptions);
 }
 
 // ─── Motor-Power-Only Matching ───────────────────────────────────────
@@ -752,12 +898,13 @@ function matchPumpsByDutyPoint(
     // Category exclusion — fundamentally wrong pump types
     if (isCategoryExcluded(p.category, application)) return false;
 
-    // Physical installation exclusions for domestic water on mains
-    // CR/CRE: require 3-phase 400V power (not available in homes)
-    // SP: require a drilled borehole (not applicable for household mains water)
-    // NB/NK: industrial flanged pumps (wrong installation type)
-    // HYDRO-MPC-E: large booster station (wrong scale)
-    if (application === "domestic_water" && waterSource !== "well") {
+    // Physical installation exclusions — SP/SQ/SQE require a drilled borehole.
+    // domestic_water: exclude unless waterSource="well" (mains/tank users don't have a borehole).
+    // water_supply: also exclude when explicitly mains/tank (borehole pumps are wrong for mains supply).
+    const excludeBoreholeFamily =
+      (application === "domestic_water" && waterSource !== "well") ||
+      (application === "water_supply" && (waterSource === "mains" || waterSource === "tank"));
+    if (excludeBoreholeFamily) {
       const familyKey = p.family.toUpperCase().replace(/\d+/g, "").trim();
       if (DOMESTIC_WATER_EXCLUDED_FAMILIES.some((f) => familyKey.startsWith(f))) return false;
     }
@@ -804,7 +951,9 @@ function matchPumpsByDutyPoint(
     const appMatch = keywords.some((kw) => appText.includes(kw));
     const appPenalty = appMatch ? 0 : 8;
 
-    const eei = (safeNumber(pump.specs.eei)) || 0.2;  // default to class-A typical (0.2) for pumps without EEI data
+    const rawEEI = safeNumber(pump.specs.eei);
+    const eei = rawEEI ?? 0.2;  // default to class-A typical (0.2) for totalScore calc
+    const hasActualEEI = rawEEI !== null;   // only circulators with real EEI data get the confidence bonus
     const eeiScore = eei * 2;
 
     // Family preference bonus (lower score = better)
@@ -818,7 +967,7 @@ function matchPumpsByDutyPoint(
     const featureText = (pump.features || []).join(" ").toLowerCase();
     const isVSD = /variable[\s-]?speed|autoadapt|auto[\s-]?adapt|integrated[\s-]?(?:inverter|frequency)|constant[\s-]?pressure/.test(featureText);
 
-    const { score: confidence, label } = calculateConfidence(flowRatio, headRatio, appMatch, eei, totalPrefBonus, isVSD);
+    const { score: confidence, label } = calculateConfidence(flowRatio, headRatio, appMatch, eei, totalPrefBonus, isVSD, hasActualEEI);
 
     const totalScore = oversizeScore + appPenalty + eeiScore - (totalPrefBonus * 0.5);
 
@@ -900,10 +1049,11 @@ function deriveDomesticDutyPoint(state: ConversationState): DutyPoint {
   };
 }
 
-function buildRecommendation(state: ConversationState): EngineResult {
+function buildRecommendation(state: ConversationState, energyOptions?: { co2Override?: number }): EngineResult {
   const application = state.application || "water_supply";
   const buildingSize = state.buildingSize || "medium";
   const region = DEFAULT_ENERGY_RATES.PH;
+  const co2 = energyOptions?.co2Override ?? region.co2;
   const operatingHours = getOperatingHours(application, buildingSize);
 
   // Motor-power-only path (when only motor kW/hp is given, no flow/head)
@@ -914,8 +1064,8 @@ function buildRecommendation(state: ConversationState): EngineResult {
       const existingPower = state.motor_kw! * 1.2;
       const pumpCostPhp = parsePrice(pump.price_range_usd) * USD_TO_PHP;
       const roi = calcROISummary(
-        { power_kw: existingPower, operating_hours: operatingHours, electricity_rate: region.rate, co2_factor: region.co2 },
-        { power_kw: newPower, operating_hours: operatingHours, electricity_rate: region.rate, co2_factor: region.co2 },
+        { power_kw: existingPower, operating_hours: operatingHours, electricity_rate: region.rate, co2_factor: co2 },
+        { power_kw: newPower, operating_hours: operatingHours, electricity_rate: region.rate, co2_factor: co2 },
         pumpCostPhp
       );
       return {
@@ -992,13 +1142,13 @@ function buildRecommendation(state: ConversationState): EngineResult {
         power_kw: typicalOversizedPower,
         operating_hours: operatingHours,
         electricity_rate: region.rate,
-        co2_factor: region.co2,
+        co2_factor: co2,
       },
       {
         power_kw: efficientPower,
         operating_hours: operatingHours,
         electricity_rate: region.rate,
-        co2_factor: region.co2,
+        co2_factor: co2,
       },
       pumpCostPhp
     );
@@ -1025,6 +1175,11 @@ function buildRecommendation(state: ConversationState): EngineResult {
     };
   });
 
+  // Sort by matchConfidence descending so the "Best Match" label always goes to the
+  // highest-confidence pump. totalScore drives eval accuracy internally; this sort ensures
+  // the display order is intuitive for users (highest % match shown first).
+  recommendedPumps.sort((a, b) => (b.matchConfidence ?? 0) - (a.matchConfidence ?? 0));
+
   const requirements = buildRequirementsSummary(state, dutyPoint);
 
   return {
@@ -1036,10 +1191,11 @@ function buildRecommendation(state: ConversationState): EngineResult {
   };
 }
 
-function buildCompetitorRecommendation(state: ConversationState, crossRefPump: CatalogPump): EngineResult {
+function buildCompetitorRecommendation(state: ConversationState, crossRefPump: CatalogPump, energyOptions?: { co2Override?: number }): EngineResult {
   const application = state.application || "heating";
   const buildingSize = state.buildingSize || "medium";
   const region = DEFAULT_ENERGY_RATES.PH;
+  const co2 = energyOptions?.co2Override ?? region.co2;
   const operatingHours = getOperatingHours(application, buildingSize);
 
   const newPower = safeNumber(crossRefPump.specs.power_kw) || 0.1;
@@ -1047,8 +1203,8 @@ function buildCompetitorRecommendation(state: ConversationState, crossRefPump: C
   const pumpCostPhp = parsePrice(crossRefPump.price_range_usd) * USD_TO_PHP;
 
   const roi = calcROISummary(
-    { power_kw: existingPower, operating_hours: operatingHours, electricity_rate: region.rate, co2_factor: region.co2 },
-    { power_kw: newPower, operating_hours: operatingHours, electricity_rate: region.rate, co2_factor: region.co2 },
+    { power_kw: existingPower, operating_hours: operatingHours, electricity_rate: region.rate, co2_factor: co2 },
+    { power_kw: newPower, operating_hours: operatingHours, electricity_rate: region.rate, co2_factor: co2 },
     pumpCostPhp
   );
 
@@ -1080,8 +1236,8 @@ function buildCompetitorRecommendation(state: ConversationState, crossRefPump: C
       const p = safeNumber(pump.specs.power_kw) || 0.1;
       const pCost = parsePrice(pump.price_range_usd) * USD_TO_PHP;
       const pRoi = calcROISummary(
-        { power_kw: existingPower, operating_hours: operatingHours, electricity_rate: region.rate, co2_factor: region.co2 },
-        { power_kw: p, operating_hours: operatingHours, electricity_rate: region.rate, co2_factor: region.co2 },
+        { power_kw: existingPower, operating_hours: operatingHours, electricity_rate: region.rate, co2_factor: co2 },
+        { power_kw: p, operating_hours: operatingHours, electricity_rate: region.rate, co2_factor: co2 },
         pCost
       );
       otherPumps.push({

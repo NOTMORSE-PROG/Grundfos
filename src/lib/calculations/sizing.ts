@@ -75,15 +75,16 @@ export function deriveDutyPoint(params: BuildingParams): DutyPoint {
       `Flow: ${flow_m3h.toFixed(2)} m³/h (ΔT = ${rules.delta_t}K)`
     );
 
-    // head = floors × floor_height × friction × (1 + fittings) × 2 (supply + return)
-    const pipe_length = params.floors * rules.floor_height_m * 2;
-    const head_m =
-      pipe_length *
-      rules.friction_factor *
-      (1 + rules.fittings_loss_pct) *
-      2;
+    // Index-circuit model: longest supply+return path = vertical rise + horizontal distribution per floor.
+    // Equipment head (terminal units + control valves) added as a fixed offset.
+    const isCommercial = params.floors > 3;
+    const horizontal_per_floor = isCommercial ? 12 : 5; // m — commercial buildings have longer horizontal runs
+    const equipment_head = isCommercial ? 6 : 3; // m — terminal units, HX, control valves
+    const index_length = params.floors * (rules.floor_height_m * 2 + horizontal_per_floor);
+    const friction_head = index_length * rules.friction_factor * (1 + rules.fittings_loss_pct);
+    const head_m = friction_head + equipment_head;
     assumptions.push(
-      `Head: ${head_m.toFixed(1)} m (${params.floors} floors, ${rules.floor_height_m}m/floor)`
+      `Head: ${head_m.toFixed(1)} m (${params.floors} floors × ${rules.floor_height_m * 2 + horizontal_per_floor}m index circuit + ${equipment_head}m equipment)`
     );
 
     return {

@@ -51,6 +51,7 @@ export default function Home() {
   const sendMessage = useCallback(
     async (content: string) => {
       if (isStreaming) return;
+      setPendingPrompt(""); // Clear pending prompt so input doesn't re-fill after send
 
       // Add user message
       const userMessage = {
@@ -284,7 +285,8 @@ export default function Home() {
           onSend={sendMessage}
           isStreaming={isStreaming}
           onStop={handleStop}
-          initialValue={pendingPrompt}
+          value={pendingPrompt}
+          onValueChange={setPendingPrompt}
           onImageProcessed={handleImageProcessed}
         />
       </main>
