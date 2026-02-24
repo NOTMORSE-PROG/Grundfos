@@ -493,7 +493,8 @@ export function getNextAction(
   latestMessage?: string,
   lastEngineAction?: "recommend" | "ask" | "greet",
   energyOptions?: { co2Override?: number },
-  hadRecommendation?: boolean
+  hadRecommendation?: boolean,
+  conversationTurns = 0
 ): EngineResult {
   // ─── Post-recommendation feedback handling ─────────────────────
   // Guard fires when:
@@ -514,12 +515,30 @@ export function getNextAction(
       /\b(small|medium|large)\s*(building|office|house|home|unit|floor)?\b/i.test(latestMessage!);
 
     if (!hasNewInfo) {
+      // Detect specific feedback type to give a more targeted response
+      const wantsCheaper = /\b(too\s*expensive|cheaper|budget|lower\s*price|affordable|cost\s*less|price)\b/i.test(latestMessage!);
+      const wantsAlternatives = /\b(show\s*(?:me\s*)?(?:more|other|alternative|different|option)|other\s*choice|more\s*option|see\s*more|show\s*alternative)\b/i.test(latestMessage!);
+      const wantsDifferentType = /\b(wrong\s*type|different\s*pump|simpler|smaller\s*pump|basic|less\s*complex)\b/i.test(latestMessage!);
+      const wantsDifferentSpecs = /\b(different\s*(?:flow|head|pressure|spec)|adjust|change\s*(?:the\s*)?spec|not\s*the\s*right\s*size)\b/i.test(latestMessage!);
+
+      let questionContext: string;
+      if (wantsCheaper) {
+        questionContext = "The user thinks the recommended pump is too expensive. Ask what their rough budget is, or if they'd like to see a more basic (less featured) Grundfos model — without suggesting competitor brands.";
+      } else if (wantsAlternatives) {
+        questionContext = "The user wants to see alternative options. Ask if they'd prefer a smaller/simpler model, a different Grundfos series, or if their specs need adjusting (different flow or head).";
+      } else if (wantsDifferentType) {
+        questionContext = "The user wants a different pump type. Ask if they're looking for something simpler (fixed-speed instead of variable), a different installation type, or a different Grundfos product family.";
+      } else if (wantsDifferentSpecs) {
+        questionContext = "The user wants to adjust their specs. Ask what specifically needs changing — flow rate, head pressure, building size, or application type.";
+      } else {
+        questionContext = lastEngineAction === "recommend"
+          ? "The user just saw pump recommendations and replied with feedback or a comment (e.g. 'doesn't look good', 'too expensive', 'not what I need'). Ask what specifically they want changed — price, pump type, performance specs, or see alternatives? Keep it conversational."
+          : "The user is still refining their requirements after seeing pump recommendations. They haven't given new duty point specs yet. Ask what they'd like to change — building size, flow/pressure, budget, or see different options?";
+      }
+
       return {
         action: "ask",
-        questionContext:
-          lastEngineAction === "recommend"
-            ? "The user just saw pump recommendations and replied with feedback or a comment (e.g. 'doesn't look good', 'too expensive', 'not what I need'). Ask what specifically they want changed — price, pump type, performance specs, or see alternatives? Keep it conversational."
-            : "The user is still refining their requirements after seeing pump recommendations. They haven't given new duty point specs yet. Ask what they'd like to change — building size, flow/pressure, budget, or see different options?",
+        questionContext,
         suggestions: ["Too expensive", "Wrong pump type", "Need different specs", "Show more options"],
         state,
       };
@@ -556,8 +575,15 @@ export function getNextAction(
   // ─── Adaptive question flow based on info quality ─────────────
   const quality = getInfoQuality(state);
 
-  // Enough info → recommend (threshold: 8 requires at least app + floors, or app + buildingSize + bathrooms)
-  if (quality >= 8) {
+  // Conversation fatigue guard: if the conversation is very long (>15 turns) and we still
+  // haven't recommended, lower the quality threshold slightly (8 → 7) to avoid an endless
+  // clarification loop. The user has been chatting long enough — make a reasonable recommendation
+  // with what we have rather than keep asking. This is especially helpful when the user has
+  // confirmed context verbally but the engine is holding out for a final data point.
+  const qualityThreshold = conversationTurns > 15 ? 7 : 8;
+
+  // Enough info → recommend
+  if (quality >= qualityThreshold) {
     // Pre-compute estimate bypass flag — used by both estimate transparency gates below.
     // Matches any explicit confirmation that the user is satisfied with the estimate or wants to proceed.
     const estimateBypass =

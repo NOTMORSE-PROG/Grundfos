@@ -4,7 +4,7 @@ import { buildQuestionSystemPrompt, EXPLANATION_PROMPT, COMPARISON_PROMPT } from
 import { getServiceClient } from "@/lib/supabase";
 import { extractIntent, getNextAction, detectEvalDomain, type EngineResult, type RecommendedPump, type ConversationState } from "@/lib/recommendation-engine";
 import { parseMessageMetadata } from "@/lib/parse-message-metadata";
-import { extractIntentWithLLM } from "@/lib/extract-intent-llm";
+import { extractIntentWithLLM, type LLMExtractedIntent } from "@/lib/extract-intent-llm";
 import { getLiveCarbonIntensity } from "@/lib/carbon-intensity";
 
 export const runtime = "nodejs";
@@ -19,10 +19,50 @@ interface ChatRequest {
   hadRecommendation?: boolean;
 }
 
+// ─── Retry helper ─────────────────────────────────────────────────────
+// Wraps any async call with a single retry and an optional timeout.
+// Handles transient Groq rate limits, network blips, and timeouts gracefully.
+async function callWithRetry<T>(
+  fn: () => Promise<T>,
+  label: string,
+  timeoutMs = 12000
+): Promise<T> {
+  const attempt = async (): Promise<T> => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      return await fn();
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+
+  try {
+    return await attempt();
+  } catch (firstErr) {
+    console.error(`[${label}] first attempt failed, retrying:`, firstErr);
+    try {
+      // Brief pause before retry — helps with rate-limit 429s
+      await new Promise((r) => setTimeout(r, 800));
+      return await attempt();
+    } catch (secondErr) {
+      console.error(`[${label}] second attempt also failed:`, secondErr);
+      throw secondErr;
+    }
+  }
+}
+
 export async function POST(request: NextRequest) {
   try {
     const body: ChatRequest = await request.json();
-    const { message, conversationId, sessionId, history: clientHistory, lastEngineAction: clientLastEngineAction, hadRecommendation: clientHadRecommendation } = body;
+    const {
+      message,
+      conversationId,
+      sessionId,
+      history: clientHistory,
+      lastEngineAction: clientLastEngineAction,
+      hadRecommendation: clientHadRecommendation,
+    } = body;
 
     if (!message || !sessionId) {
       return new Response(
@@ -41,48 +81,59 @@ export async function POST(request: NextRequest) {
     if (supabase) {
       try {
         if (currentConversationId) {
-          const { data: history } = await supabase
+          const { data: history, error: histErr } = await supabase
             .from("messages")
             .select("role, content, metadata")
             .eq("conversation_id", currentConversationId)
             .order("created_at", { ascending: true })
             .limit(50);
 
-          if (history) {
+          if (histErr) {
+            console.error("[route] Supabase history load error:", histErr);
+          } else if (history) {
             for (const msg of history) {
               historyMessages.push(msg);
             }
           }
         } else {
-          const { data: conv } = await supabase
+          const { data: conv, error: convErr } = await supabase
             .from("conversations")
             .insert({ session_id: sessionId, title: "New Chat" })
             .select("id")
             .single();
-          if (conv) {
+          if (convErr) {
+            console.error("[route] Supabase conversation create error:", convErr);
+          } else if (conv) {
             currentConversationId = conv.id;
           }
         }
 
         if (currentConversationId) {
-          await supabase.from("messages").insert({
+          const { error: insertErr } = await supabase.from("messages").insert({
             conversation_id: currentConversationId,
             role: "user",
             content: message,
           });
+          if (insertErr) {
+            console.error("[route] Supabase user message insert error:", insertErr);
+          }
         }
-      } catch {
-        // Supabase operation failed, continue without persistence
+      } catch (supabaseErr) {
+        console.error("[route] Supabase operation failed, continuing without persistence:", supabaseErr);
       }
     }
 
-    // ─── Engine: Extract intent from ALL messages ─────────────────
-    // Use Supabase history if available, otherwise use client-provided history
+    // ─── Build effective history ──────────────────────────────────
+    // Use Supabase history if available, otherwise use client-provided history.
+    // This covers both signed-in users (Supabase) and guests (Zustand clientHistory).
     const effectiveHistory = historyMessages.length > 0 ? historyMessages : (clientHistory || []);
     const allMessages = [
       ...effectiveHistory,
       { role: "user", content: message },
     ];
+
+    // Conversation length — used for context-awareness in prompts and quality threshold
+    const conversationTurns = Math.floor(allMessages.length / 2);
 
     // Detect last engine action + whether any recommendation was ever shown.
     // For signed-in users: read from Supabase message metadata (full history scan).
@@ -109,28 +160,42 @@ export async function POST(request: NextRequest) {
       hadRecommendation = clientHadRecommendation;
     }
 
-    // Run LLM intent extraction, regex extraction, and live CO2 fetch in parallel
-    // LLM understands natural language, paraphrases, and Filipino/Tagalog
-    // Regex is fast and precise for exact numbers (flow, head, power)
-    // CO2 fetch is cached (15 min) — no latency impact after first request
-    const [llmIntent, regexState, gridData] = await Promise.all([
-      extractIntentWithLLM(groq, allMessages),
-      Promise.resolve(extractIntent(allMessages)),
+    // ─── Extract intent: regex first (synchronous, reliable for exact specs) ─
+    // We compute regexState BEFORE the parallel calls so it can be injected into
+    // the LLM extraction as "already confirmed context" — preventing context drift
+    // in long conversations where early facts fall outside the LLM message window.
+    const regexState: ConversationState = extractIntent(allMessages);
+
+    // Apply domain detection to regexState before injection
+    const allText = allMessages.map((m) => m.content).join(" ");
+    const detectedDomain = detectEvalDomain(allText);
+    if (detectedDomain) regexState.evalDomain = detectedDomain;
+
+    // Run LLM intent extraction and live CO2 fetch in parallel.
+    // The regexState is passed to extractIntentWithLLM so the LLM knows what's
+    // already confirmed — it only needs to find new/corrected information.
+    const [llmIntent, gridData] = await Promise.all([
+      callWithRetry(
+        () => extractIntentWithLLM(groq, allMessages, regexState),
+        "extractIntentWithLLM"
+      ).catch((err: unknown) => {
+        console.error("[route] LLM intent extraction failed after retries:", err);
+        return {} as LLMExtractedIntent;
+      }),
       getLiveCarbonIntensity(),
     ]);
 
-    // Merge: regex wins where it found something (reliable for exact specs)
+    // ─── Merge: regex wins where it found something (reliable for exact specs) ──
     // LLM fills gaps where regex found nothing (handles natural language)
     // Exception: qualitative fields (buildingSize, waterSource) — LLM also wins when latest
     // message explicitly contains correction keywords (catches paraphrases the regex misses).
-    // Exception for specs: LLM wins when the latest message has explicit new specs that differ
-    // from the regex state (handles mÂ³/h encoding where regex may still miss the new value).
     const latestHasBuildingSize = /\b(small|medium|large)\b/i.test(message);
     const latestHasWaterSource = /\b(mains|tap|city\s+water|well|borehole|tank|cistern|reservoir)\b/i.test(message);
     // Detect if the latest message contains explicit flow/head specs (encoding-robust)
     const latestHasFlow = /\b\d+(?:\.\d+)?\s*m.{0,2}[\/]h\b/i.test(message) || /\b\d+(?:\.\d+)?\s*(?:m3\/h|gpm|lpm|l\/s)\b/i.test(message);
     const latestHasHead = /\b\d+(?:\.\d+)?\s*m\b(?!\s*[³3\/Â])/i.test(message);
     const latestHasMotor = /\b\d+(?:\.\d+)?\s*kW\b/i.test(message);
+
     const state: ConversationState = {
       ...regexState,
       ...(llmIntent.application && !regexState.application && { application: llmIntent.application }),
@@ -155,12 +220,14 @@ export async function POST(request: NextRequest) {
       state.buildingSize = f <= 3 ? "small" : f <= 8 ? "medium" : "large";
     }
 
-    // Apply domain detection so CBS/DBS/IN/WU preference bonuses fire in chat (same as eval path)
-    const allText = allMessages.map((m) => m.content).join(" ");
-    const detectedDomain = detectEvalDomain(allText);
-    if (detectedDomain) state.evalDomain = detectedDomain;
-
-    let engineResult: EngineResult = getNextAction(state, message, lastEngineAction, { co2Override: gridData.co2 }, hadRecommendation);
+    let engineResult: EngineResult = getNextAction(
+      state,
+      message,
+      lastEngineAction,
+      { co2Override: gridData.co2 },
+      hadRecommendation,
+      conversationTurns
+    );
 
     // Handle 0 pump matches — fall back to asking for more info
     if (
@@ -170,8 +237,8 @@ export async function POST(request: NextRequest) {
       engineResult = {
         action: "ask",
         questionContext:
-          "No exact pump matches found for their specs. Ask if they can adjust their requirements, or suggest they consult a Grundfos engineer for a custom solution.",
-        suggestions: ["Adjust my specs", "Talk to an engineer"],
+          "No exact pump matches found for their specs. Ask if they can adjust their requirements — different flow, head, or application — or suggest they consult a Grundfos engineer for a custom solution.",
+        suggestions: ["Adjust my specs", "Different application", "Talk to an engineer"],
         state,
       };
     }
@@ -182,7 +249,7 @@ export async function POST(request: NextRequest) {
       content: string;
     }> = [];
 
-    // Shared: build known-context string for both question and recommend paths
+    // Build known-context string for both question and recommend paths
     const knownContext: string[] = [];
     if (state.application) knownContext.push(`application: ${state.application.replace(/_/g, " ")}`);
     if (state.buildingSize) knownContext.push(`building: ${state.buildingSize}`);
@@ -195,39 +262,63 @@ export async function POST(request: NextRequest) {
     if (state.problem) knownContext.push(`problem: ${state.problem.replace(/_/g, " ")}`);
     const knownContextStr = knownContext.length > 0 ? knownContext.join(", ") : "nothing yet";
 
+    // Build a do-not-ask list from confirmed state fields — prevents redundant questions
+    const doNotAskFields: string[] = [];
+    if (state.application) doNotAskFields.push("application");
+    if (state.floors != null) doNotAskFields.push("floors");
+    if (state.bathrooms != null) doNotAskFields.push("bathrooms");
+    if (state.waterSource) doNotAskFields.push("water source");
+    if (state.buildingSize) doNotAskFields.push("building size");
+    if (state.flow_m3h != null) doNotAskFields.push("flow rate");
+    if (state.head_m != null) doNotAskFields.push("head pressure");
+    if (state.problem) doNotAskFields.push("problem type");
+
     // AI-generated question + suggestions (ask / greet)
     let aiQuestion = "";
     let aiSuggestions: string[] = [];
 
     if (engineResult.action === "ask" || engineResult.action === "greet") {
-      // Single non-streamed JSON call — question and chips generated together so they always match
       const questionContext = engineResult.questionContext ||
         (engineResult.action === "greet"
           ? "Greet the user and ask what pump problem they need help with."
           : "Ask the user for more information about their pump needs.");
 
       try {
-        const qResponse = await groq.chat.completions.create({
-          model: "llama-3.1-8b-instant",
-          messages: [
-            {
-              role: "system",
-              content: buildQuestionSystemPrompt(questionContext, knownContextStr),
-            },
-            // Include last few messages for conversational continuity
-            ...effectiveHistory.slice(-4).map((m) => ({
-              role: m.role as "user" | "assistant",
-              content: m.content,
-            })),
-            { role: "user", content: message },
-          ],
-          temperature: 0.7,
-          max_tokens: 150,
-          response_format: { type: "json_object" },
-        });
+        const qSystemPrompt = buildQuestionSystemPrompt(
+          questionContext,
+          knownContextStr,
+          doNotAskFields,
+          conversationTurns
+        );
+
+        const qResponse = await callWithRetry(
+          () => groq.chat.completions.create({
+            model: "llama-3.1-8b-instant",
+            messages: [
+              { role: "system", content: qSystemPrompt },
+              // Include last 6 messages for conversational continuity (up from 4)
+              ...effectiveHistory.slice(-6).map((m) => ({
+                role: m.role as "user" | "assistant",
+                content: m.content,
+              })),
+              { role: "user", content: message },
+            ],
+            temperature: 0.7,
+            max_tokens: 180,
+            response_format: { type: "json_object" },
+          }),
+          "questionGeneration"
+        );
 
         const qRaw = qResponse.choices[0]?.message?.content || "{}";
-        const qParsed = JSON.parse(qRaw) as { question?: string; suggestions?: unknown };
+        let qParsed: { question?: string; suggestions?: unknown };
+        try {
+          qParsed = JSON.parse(qRaw) as { question?: string; suggestions?: unknown };
+        } catch {
+          const stripped = qRaw.replace(/```(?:json)?\s*/gi, "").replace(/```/g, "").trim();
+          qParsed = JSON.parse(stripped) as { question?: string; suggestions?: unknown };
+        }
+
         if (typeof qParsed.question === "string" && qParsed.question.trim()) {
           aiQuestion = qParsed.question.trim();
         }
@@ -236,8 +327,9 @@ export async function POST(request: NextRequest) {
             .filter((s): s is string => typeof s === "string" && s.trim().length > 0)
             .slice(0, 4);
         }
-      } catch {
-        // Silent fail — fallback to engine suggestions below
+      } catch (qErr) {
+        console.error("[route] Question generation failed:", qErr);
+        // Fallback handled below
       }
 
       // Fallback if LLM failed
@@ -257,7 +349,6 @@ export async function POST(request: NextRequest) {
       const monthlySavings = topPump
         ? `₱${Math.round(topPump.roi.annual_savings / 12).toLocaleString()}/month`
         : "";
-      // Separate top pump from alternates — prevents LLM from confusing which is primary
       const topPumpName = topPump?.model || "matched pump";
       const alternatePumps = engineResult.pumps?.slice(1).map((p) => p.model) || [];
       const app = state.application?.replace(/_/g, " ") || "their system";
@@ -267,20 +358,23 @@ export async function POST(request: NextRequest) {
         ? `\nTheir current pump: ${topPump.comparedTo}. This is a direct Grundfos equivalent.`
         : "";
 
-      // Detect re-recommendation after user updated their specs (e.g., "small office" after "large")
       const isReRecommend = lastEngineAction === "recommend" && engineResult.action === "recommend";
 
-      // Build rich user context so LLM can give specific, personalised responses
       const dp = engineResult.dutyPoint;
       const specsAreUserProvided = state.flow_m3h != null && state.head_m != null;
       const dutyLine = dp
-        ? `Duty point: ${dp.estimated_flow_m3h} m³/h at ${dp.estimated_head_m} m head (${specsAreUserProvided ? "user-provided exact specs" : "estimated from building parameters"})`
+        ? `Duty point: ${dp.estimated_flow_m3h} m³/h at ${dp.estimated_head_m} m head (${specsAreUserProvided ? "user-provided exact specs" : "estimated from building parameters — mention this is an estimate"})`
         : "";
       const buildingLine = [
         state.buildingSize && `${state.buildingSize} building`,
         state.floors && `${state.floors} floors`,
         state.problem && `problem: ${state.problem.replace(/_/g, " ")}`,
       ].filter(Boolean).join(", ");
+
+      // Long conversation hint — helps LLM stay contextual in extended chats
+      const longConvoHint = conversationTurns > 10
+        ? "\nNote: this has been a long conversation — be concise and reference the established facts above, not generic pump theory."
+        : "";
 
       chatMessages.push({
         role: "system",
@@ -294,10 +388,10 @@ ${alternatePumps.length > 0 ? `  • Also visible as alternatives: ${alternatePu
 Best Match saves approximately ${savings} (${monthlySavings}) vs a typical oversized installation.${competitorContext}
 ${topPump?.oversizingNote || ""}
 Specs and ROI are in cards below — write a warm, specific 2-3 sentence explanation that references their actual situation (building type, problem, or specs).
-CRITICAL: Your response MUST name ${topPumpName} as the primary recommendation. Do NOT name any alternative as the top pick. These model names are the ONLY valid ones — never invent, abbreviate, or substitute.${isReRecommend ? `\nUser just updated their requirements — start with a brief 1-sentence acknowledgment of what changed, then explain ${topPumpName}.` : ""}`,
+CRITICAL: Your response MUST name ${topPumpName} as the primary recommendation. Do NOT name any alternative as the top pick. These model names are the ONLY valid ones — never invent, abbreviate, or substitute.${isReRecommend ? `\nUser just updated their requirements — start with a brief 1-sentence acknowledgment of what changed, then explain ${topPumpName}.` : ""}${longConvoHint}`,
       });
-      // Limit history to last 4 messages — prevents old pump names from bleeding into LLM response
-      for (const msg of effectiveHistory.slice(-4)) {
+      // Limit history to last 6 messages — enough conversational context without bleeding old pump names
+      for (const msg of effectiveHistory.slice(-6)) {
         chatMessages.push({
           role: msg.role as "user" | "assistant",
           content: msg.content,
@@ -309,13 +403,21 @@ CRITICAL: Your response MUST name ${topPumpName} as the primary recommendation. 
     // ─── For recommend: build streamed LLM call ───────────────────
     let chatStream: AsyncIterable<{ choices: Array<{ delta?: { content?: string | null } }> }> | null = null;
     if (engineResult.action === "recommend" && chatMessages.length > 0) {
-      chatStream = await groq.chat.completions.create({
-        model: "llama-3.1-8b-instant",
-        messages: chatMessages,
-        stream: true,
-        temperature: 0.6,
-        max_tokens: 200,
-      });
+      try {
+        chatStream = await callWithRetry(
+          () => groq.chat.completions.create({
+            model: "llama-3.1-8b-instant",
+            messages: chatMessages,
+            stream: true,
+            temperature: 0.6,
+            max_tokens: 220,
+          }),
+          "recommendationStream"
+        );
+      } catch (streamErr) {
+        console.error("[route] Recommendation stream init failed:", streamErr);
+        // chatStream stays null — we'll send a fallback message in the stream controller
+      }
     }
 
     const encoder = new TextEncoder();
@@ -345,8 +447,18 @@ CRITICAL: Your response MUST name ${topPumpName} as the primary recommendation. 
                 );
               }
             }
+          } else if (engineResult.action === "recommend") {
+            // Recommendation stream failed — use a clear fallback
+            const topName = engineResult.pumps?.[0]?.model || "a matching pump";
+            const fallbackText = `Great news! Based on your requirements, ${topName} is the best fit. Check the details in the card below for full specs and savings.`;
+            fullResponse = fallbackText;
+            controller.enqueue(
+              encoder.encode(
+                `data: ${JSON.stringify({ type: "token", content: fallbackText })}\n\n`
+              )
+            );
           } else {
-            // Ask / greet: send AI-generated question as a single token (already ready)
+            // Ask / greet: send AI-generated question as a single token
             fullResponse = aiQuestion;
             controller.enqueue(
               encoder.encode(
@@ -368,10 +480,10 @@ CRITICAL: Your response MUST name ${topPumpName} as the primary recommendation. 
             );
           }
 
-          // Save assistant response
+          // Save assistant response to Supabase
           if (supabase && currentConversationId) {
             try {
-              await supabase.from("messages").insert({
+              const { error: assistantInsertErr } = await supabase.from("messages").insert({
                 conversation_id: currentConversationId,
                 role: "assistant",
                 content: parsed.content,
@@ -379,37 +491,47 @@ CRITICAL: Your response MUST name ${topPumpName} as the primary recommendation. 
                   engineAction: engineResult.action,
                   suggestions: aiSuggestions.length > 0 ? aiSuggestions : engineResult.suggestions,
                   requirements: engineResult.requirements,
+                  // Persist pump cards so signed-in users see them after page reload
+                  pumps: engineResult.pumps ?? [],
                 },
               });
-
-              if (!conversationId && fullResponse.length > 0) {
-                const titleResponse = await groq.chat.completions.create({
-                  model: "llama-3.1-8b-instant",
-                  messages: [
-                    {
-                      role: "system",
-                      content:
-                        "Generate a very short title (max 5 words) for this conversation. Just the title, nothing else.",
-                    },
-                    { role: "user", content: message },
-                    {
-                      role: "assistant",
-                      content: fullResponse.slice(0, 200),
-                    },
-                  ],
-                  temperature: 0.3,
-                  max_tokens: 20,
-                });
-                const title =
-                  titleResponse.choices[0]?.message?.content?.trim() ||
-                  "New Chat";
-                await supabase
-                  .from("conversations")
-                  .update({ title, updated_at: new Date().toISOString() })
-                  .eq("id", currentConversationId);
+              if (assistantInsertErr) {
+                console.error("[route] Supabase assistant message insert error:", assistantInsertErr);
               }
-            } catch {
-              // Not critical
+
+              // Generate conversation title on first response
+              if (!conversationId && fullResponse.length > 0) {
+                try {
+                  const titleResponse = await groq.chat.completions.create({
+                    model: "llama-3.1-8b-instant",
+                    messages: [
+                      {
+                        role: "system",
+                        content:
+                          "Generate a very short title (max 5 words) for this conversation. Just the title, nothing else.",
+                      },
+                      { role: "user", content: message },
+                      {
+                        role: "assistant",
+                        content: fullResponse.slice(0, 200),
+                      },
+                    ],
+                    temperature: 0.3,
+                    max_tokens: 20,
+                  });
+                  const title =
+                    titleResponse.choices[0]?.message?.content?.trim() ||
+                    "New Chat";
+                  await supabase
+                    .from("conversations")
+                    .update({ title, updated_at: new Date().toISOString() })
+                    .eq("id", currentConversationId);
+                } catch (titleErr) {
+                  console.error("[route] Title generation failed (non-critical):", titleErr);
+                }
+              }
+            } catch (saveErr) {
+              console.error("[route] Supabase response save failed (non-critical):", saveErr);
             }
           }
 
@@ -478,12 +600,20 @@ CRITICAL: Your response MUST name ${topPumpName} as the primary recommendation. 
             )
           );
           controller.close();
-        } catch (error) {
-          controller.enqueue(
-            encoder.encode(
-              `data: ${JSON.stringify({ type: "error", message: String(error) })}\n\n`
-            )
-          );
+        } catch (streamErr) {
+          console.error("[route] Stream controller error:", streamErr);
+          try {
+            controller.enqueue(
+              encoder.encode(
+                `data: ${JSON.stringify({
+                  type: "error",
+                  message: "Something went wrong. Please try again.",
+                })}\n\n`
+              )
+            );
+          } catch {
+            // Controller may already be closed
+          }
           controller.close();
         }
       },
@@ -497,10 +627,11 @@ CRITICAL: Your response MUST name ${topPumpName} as the primary recommendation. 
       },
     });
   } catch (error) {
+    console.error("[route] Unhandled POST error:", error);
     return new Response(
       JSON.stringify({
         error: "Internal server error",
-        details: String(error),
+        details: "Something went wrong processing your request. Please try again.",
       }),
       { status: 500, headers: { "Content-Type": "application/json" } }
     );

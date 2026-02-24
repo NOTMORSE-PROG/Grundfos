@@ -1,4 +1,5 @@
 import Groq from "groq-sdk";
+import type { ConversationState } from "@/lib/recommendation-engine";
 
 export interface LLMExtractedIntent {
   application?: "heating" | "cooling" | "domestic_water" | "water_supply" | "wastewater" | "dosing";
@@ -81,30 +82,76 @@ Messages that must produce {} — no pump info present:
 - "hello", "hi", "hey" → {}
 - "interesting", "go on", "and then?" → {}`;
 
+/**
+ * Build a state-context block to inject into the extraction prompt.
+ * This tells the LLM what is ALREADY CONFIRMED so it focuses only on
+ * new/corrected info in the recent messages — preventing context drift
+ * in long conversations where early facts fall outside the message window.
+ */
+function buildStateContext(currentState: Partial<ConversationState>): string {
+  const known: Record<string, unknown> = {};
+
+  if (currentState.application) known.application = currentState.application;
+  if (currentState.buildingSize) known.buildingSize = currentState.buildingSize;
+  if (currentState.floors != null) known.floors = currentState.floors;
+  if (currentState.bathrooms != null) known.bathrooms = currentState.bathrooms;
+  if (currentState.waterSource) known.waterSource = currentState.waterSource;
+  if (currentState.flow_m3h != null) known.flow_m3h = currentState.flow_m3h;
+  if (currentState.head_m != null) known.head_m = currentState.head_m;
+  if (currentState.motor_kw != null) known.motor_kw = currentState.motor_kw;
+  if (currentState.existingPumpBrand) known.existingPumpBrand = currentState.existingPumpBrand;
+  if (currentState.existingPump) known.existingPump = currentState.existingPump;
+  if (currentState.problem) known.problem = currentState.problem;
+
+  if (Object.keys(known).length === 0) return "";
+
+  return `\n\nALREADY CONFIRMED from earlier in this conversation — do NOT re-extract these unless the latest message EXPLICITLY changes them:\n${JSON.stringify(known, null, 2)}\n\nOnly return fields that are genuinely NEW in the recent messages, or that CORRECT a confirmed value above. If the confirmed values still apply unchanged, omit them from your output — they are already stored.`;
+}
+
 export async function extractIntentWithLLM(
   groq: Groq,
-  messages: Array<{ role: string; content: string }>
+  messages: Array<{ role: string; content: string }>,
+  currentState?: Partial<ConversationState>
 ): Promise<LLMExtractedIntent> {
   try {
+    const stateContext = currentState ? buildStateContext(currentState) : "";
+    const systemPrompt = EXTRACTION_SYSTEM_PROMPT + stateContext;
+
     const response = await groq.chat.completions.create({
       model: "llama-3.1-8b-instant",
       messages: [
-        { role: "system", content: EXTRACTION_SYSTEM_PROMPT },
-        // Last 6 messages = up to 3 exchanges — enough context, avoids prompt bloat
+        { role: "system", content: systemPrompt },
+        // Last 8 messages = up to 4 exchanges — better coverage without prompt bloat.
+        // The state injection above keeps the LLM anchored to confirmed facts
+        // even when early messages fall outside this window.
         ...messages
-          .slice(-6)
+          .slice(-8)
           .map((m) => ({
             role: m.role as "user" | "assistant",
             content: m.content,
           })),
       ],
       temperature: 0,
-      max_tokens: 200,
+      max_tokens: 250,
       response_format: { type: "json_object" },
     });
 
     const text = response.choices[0]?.message?.content || "{}";
-    const parsed = JSON.parse(text) as Record<string, unknown>;
+
+    // Robust JSON parse — LLM occasionally wraps output in markdown code fences
+    let parsed: Record<string, unknown>;
+    try {
+      parsed = JSON.parse(text) as Record<string, unknown>;
+    } catch {
+      // Strip markdown fences if present and retry
+      const stripped = text.replace(/```(?:json)?\s*/gi, "").replace(/```/g, "").trim();
+      try {
+        parsed = JSON.parse(stripped) as Record<string, unknown>;
+      } catch {
+        console.error("[extractIntentWithLLM] JSON parse failed, raw text:", text);
+        return {};
+      }
+    }
 
     // Clean: only return fields that are non-null and match expected types
     const result: LLMExtractedIntent = {};
@@ -121,8 +168,9 @@ export async function extractIntentWithLLM(
     if (typeof parsed.problem === "string") result.problem = parsed.problem as LLMExtractedIntent["problem"];
 
     return result;
-  } catch {
-    // Silent fail — regex engine in extractIntent() handles it as fallback
+  } catch (err) {
+    // Log the error for debugging — silent fail still applies so regex engine handles it as fallback
+    console.error("[extractIntentWithLLM] LLM extraction failed:", err);
     return {};
   }
 }
