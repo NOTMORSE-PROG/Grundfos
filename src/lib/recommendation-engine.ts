@@ -161,7 +161,9 @@ function findLatestMatchInMessages(userTexts: string[], pattern: RegExp): RegExp
 const WATER_SOURCE_PATTERNS: Array<{ source: WaterSource; pattern: RegExp }> = [
   { source: "well", pattern: /\b(well|borehole|ground\s*water|deep\s*well)\b/i },
   { source: "tank", pattern: /\b(tank|cistern|reservoir|rain\s*water)\b/i },
-  { source: "mains", pattern: /\b(mains|municipal|city\s*water|piped|metro\s*water|water\s*district)\b/i },
+  // "city/tap water", "city water", "tap water", "mains", "municipal", "piped" — all mean mains supply.
+  // The city[\s/]?tap pattern catches the common shorthand "city/tap water" from suggestion buttons.
+  { source: "mains", pattern: /\b(mains|municipal|city[\s\/]?tap|city\s*water|tap\s*water|piped|metro\s*water|water\s*district|public\s*water)\b/i },
 ];
 
 const PROBLEM_PATTERNS: Array<{ problem: Problem; pattern: RegExp }> = [
@@ -215,23 +217,28 @@ export function detectEvalDomain(queryText: string): string | undefined {
   // More specific sub-domains checked FIRST before general domain catches
   if (/cbs-hvac|cbs\b.*hvac|commercial\s+building.*hvac/i.test(queryText)) return "CBS";
   if (/dbs-hotwater|dbs\b.*hot[\s-]?water/i.test(queryText)) return "DBS-HotWater";
-  // Informal hot-water patterns — e.g. "for hotwater instead", "actually for hot water"
+  // Informal hot-water patterns — e.g. "for hotwater instead", "hot water recirculation", "HWR"
   // Must appear BEFORE "dbs-heating" so "hotwater" corrections take priority in the same message
-  if (/\bfor\s+hot[\s-]?water\b|\bhotwater\b/i.test(queryText)) return "DBS-HotWater";
+  if (/\bfor\s+hot[\s-]?water\b|\bhotwater\b|\bhot[\s-]?water[\s-]?recirc|\bHWR\b/i.test(queryText)) return "DBS-HotWater";
   if (/dbs-heating|dbs\b.*heat/i.test(queryText)) return "DBS-Heating";
   if (/wu-borehole|borehole\s+service/i.test(queryText)) return "WU-Borehole";
   if (/wu-domestic|domestic\s+service/i.test(queryText)) return "WU-Domestic";
   if (/wu-irrigation|irrigation\s+service/i.test(queryText)) return "WU-Irrigation";
   if (/wu-boosting/i.test(queryText)) return "WU";
-  // IN sub-domains — must check before generic "industry-" catch
-  if (/industry[\s-]?motordrive|industry[\s-]?motor\s+drive|motor[\s-]?drive\s+process/i.test(queryText)) return "IN-MotorDrive";
-  if (/industry[\s-]?coolant|industry[\s-]?cool(?:ing)?/i.test(queryText)) return "IN-Coolant";
-  if (/industry[\s-]?process\b/i.test(queryText)) return "IN-Process";
-  if (/industry[\s-]?booster/i.test(queryText)) return "IN-Booster";
+  // IN sub-domains — must check before generic "industry-" catch.
+  // Patterns accept both "industry-" (hyphenated eval-kit prefix) and "industrial" (natural language).
+  // Also catches IEC motor queries — "IEC motor", "IEC standard motor", "IEC induction motor"
+  if (/industr(?:y|ial)[\s-]?(?:motordrive|motor\s*drive)|motor[\s-]?drive\s+process/i.test(queryText)) return "IN-MotorDrive";
+  if (/\bIEC[\s-]?(?:standard[\s-]?)?(?:induction[\s-]?)?motor\b|\bIE[23]\s+(?:motor|efficiency)\b/i.test(queryText)) return "IN-MotorDrive";
+  if (/industr(?:y|ial)[\s-]?(?:coolant|cool(?:ing)?)/i.test(queryText)) return "IN-Coolant";
+  if (/industr(?:y|ial)[\s-]?process\b/i.test(queryText)) return "IN-Process";
+  if (/industr(?:y|ial)[\s-]?booster/i.test(queryText)) return "IN-Booster";
   if (/industry-/i.test(queryText)) return "IN";  // fallback for any other industry- prefix
-  // Contextual inference for industrial without explicit keywords
+  // Contextual inference — order matters: more specific first
   if (/motor[\s-]?drive/i.test(queryText)) return "IN-MotorDrive";
   if (/industrial[\s-]?coolant|process[\s-]?cool(?:ing)?|coolant[\s-]?pump/i.test(queryText)) return "IN-Coolant";
+  // Commercial HVAC contextual — large-scale heating/cooling without explicit CBS keyword
+  if (/commercial\s+(?:hvac|heating|cooling|building)|district\s+heating/i.test(queryText)) return "CBS";
   if (/water\s+utility/i.test(queryText)) return "WU";
   return undefined;
 }
@@ -624,6 +631,24 @@ export function getNextAction(
     // Has new info → fall through so the engine re-recommends with updated state
   }
 
+  // ─── Dynamic application inference from evalDomain ────────────────────────
+  // evalDomain is more authoritative than APP_PATTERN keyword detection for eval-kit
+  // style queries — e.g. "wu-domestic service" contains the word "domestic" which
+  // mistakenly maps to domestic_water, but the WU- prefix unambiguously means
+  // water utility → water_supply. Similarly "dbs-heating" / "industry-coolant" etc.
+  // This override runs BEFORE all question gates so the correct application and
+  // waterSource are always in place when the engine decides what to ask/recommend.
+  if (state.evalDomain) {
+    const d = state.evalDomain.toLowerCase();
+    if (d.startsWith("wu-") || d === "wu") {
+      state = { ...state, application: "water_supply", waterSource: state.waterSource ?? "well" };
+    } else if (d.startsWith("in-") || d === "in") {
+      state = { ...state, application: "water_supply" };
+    } else if (d.startsWith("cbs") || d.startsWith("dbs")) {
+      state = { ...state, application: "heating" };
+    }
+  }
+
   // ─── Greeting ─────────────────────────────────────────────────
   if (latestMessage && GREETING_PATTERN.test(latestMessage) && !state.application && !state.flow_m3h && !state.existingPumpBrand) {
     return {
@@ -714,10 +739,13 @@ export function getNextAction(
     }
 
     // ── Mandatory gate: water_supply needs water source (mains booster vs borehole are completely different pumps) ─
+    // Bypass when motor_kw is provided — we can match by power directly without knowing the water source.
+    // Also bypass when exact flow/head are known (already handled by domestic_water gate above and quality check).
     if (
       state.application === "water_supply" &&
       !state.waterSource &&
-      state.flow_m3h == null
+      state.flow_m3h == null &&
+      !state.motor_kw
     ) {
       return {
         action: "ask",
@@ -982,22 +1010,44 @@ function matchPumpsByMotorPower(
     return true;
   });
 
+  // Motor-drive domain check — only a "Motor" category product is the exact right fit.
+  // A pump (Multistage, Submersible) sharing the same power spec is a weaker match.
+  const isDomainMotorDrive = !!(evalDomain?.toLowerCase().includes("motordrive"));
+
   // Sort by: closest power match, then domain preference
   const scored = candidates.map((pump) => {
     const pumpKw = safeNumber(pump.specs.power_kw) || safeNumber(pump.specs.motor_kw) || 0;
     const powerDiff = Math.abs(pumpKw - motorKw) / motorKw;
     const familyKey = pump.family.toUpperCase().replace(/\d+/g, "").trim();
     const prefBonus = domainPrefs[familyKey] || 0;
-    return { pump, powerDiff, prefBonus };
+    // Domain preference contributes to confidence score (same 0.3 scale as duty-point path)
+    const prefContrib = prefBonus * 0.3;
+    // Category bonus/penalty for motor-drive domain:
+    //   Motor category  → perfect product type  (+4)
+    //   Pump category   → wrong product type    (−12)
+    const isMotorCategory = pump.category.toLowerCase() === "motor";
+    const catBonus   = (isDomainMotorDrive && isMotorCategory)  ?  4 : 0;
+    const catPenalty = (isDomainMotorDrive && !isMotorCategory) ? 12 : 0;
+    const rawConf = Math.min(99, Math.max(40, Math.round(
+      95 - powerDiff * 30 + prefContrib + catBonus - catPenalty
+    )));
+    return { pump, powerDiff, prefBonus, rawConf };
   });
 
   scored.sort((a, b) => (a.powerDiff - b.powerDiff) - (a.prefBonus - b.prefBonus) * 0.05);
 
-  return scored.slice(0, 3).map((s) => ({
-    pump: s.pump,
-    confidence: Math.round(95 - s.powerDiff * 30),
-    label: s.powerDiff < 0.1 ? "Excellent Match" : s.powerDiff < 0.2 ? "Good Match" : "Fair Match",
-  }));
+  // Apply the same rank-based display cap used in matchPumpsByDutyPoint —
+  // prevents score inversions and gives a clear winner vs. alternatives.
+  let prevConf = 100;
+  return scored.slice(0, 3).map((s) => {
+    const displayConf = Math.max(40, Math.min(prevConf - (prevConf < 100 ? 3 : 0), s.rawConf));
+    prevConf = displayConf;
+    const label =
+      displayConf >= 90 ? "Excellent Match" :
+      displayConf >= 75 ? "Good Match" :
+      displayConf >= 60 ? "Fair Match" : "Partial Match";
+    return { pump: s.pump, confidence: displayConf, label };
+  });
 }
 
 // ─── Pump Matching ───────────────────────────────────────────────────
@@ -1081,11 +1131,12 @@ function matchPumpsByDutyPoint(
 
   const appKeywords: Record<string, string[]> = {
     heating: ["heating", "circulator", "hvac"],
-    // "cooling system" matches MAGNA3/MAGNA1/TP ("Cooling systems") but NOT CR 5-5 ("Cooling water")
-    // or MTH ("Process cooling"). "coolant" matches MTH's "Industrial coolant" correctly.
-    cooling: ["cooling system", "coolant", "hvac", "circulator", "air conditioning"],
-    water_supply: ["water supply", "pressure boosting", "multistage", "booster", "irrigation"],
-    domestic_water: ["domestic", "booster", "residential", "self-priming"],
+    // "cooling system" matches MAGNA3/MAGNA1/TP. "cooling water" matches CR 5-5.
+    // "coolant" matches MTH ("Industrial coolant") and CR ("Cooling water" contains "water" not "coolant"
+    // so adding "cooling water" as explicit keyword closes this gap).
+    cooling: ["cooling system", "cooling water", "coolant", "hvac", "circulator", "air conditioning"],
+    water_supply: ["water supply", "pressure boosting", "multistage", "booster", "irrigation", "industrial process", "industrial water"],
+    domestic_water: ["domestic", "booster", "residential", "self-priming", "drinking water"],
     wastewater: ["wastewater", "sewage", "drainage"],
     dosing: ["dosing", "chemical", "treatment"],
   };
@@ -1271,7 +1322,9 @@ function buildRecommendation(state: ConversationState, energyOptions?: { co2Over
         ...pump,
         price_range_php: parsePricePhp(pump.price_range_usd),
         roi,
-        oversizingNote: `Matched by motor power: ${state.motor_kw} kW`,
+        oversizingNote: pump.category.toLowerCase() === "motor"
+          ? `${pump.specs.efficiency_class ? `${String(pump.specs.efficiency_class)} efficiency` : "IEC motor"} — exact ${state.motor_kw} kW match`
+          : `Motor power match: ${state.motor_kw} kW (pump assembly)`,
         matchConfidence: confidence,
         matchLabel: label,
       };

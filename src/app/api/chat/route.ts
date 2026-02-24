@@ -199,7 +199,7 @@ export async function POST(request: NextRequest) {
     // Detect if the latest message contains explicit flow/head specs (encoding-robust)
     const latestHasFlow = /\b\d+(?:\.\d+)?\s*m.{0,2}[\/]h\b/i.test(message) || /\b\d+(?:\.\d+)?\s*(?:m3\/h|gpm|lpm|l\/s)\b/i.test(message);
     const latestHasHead = /\b\d+(?:\.\d+)?\s*m\b(?!\s*[³3\/Â])/i.test(message);
-    const latestHasMotor = /\b\d+(?:\.\d+)?\s*kW\b/i.test(message);
+    const latestHasMotor = /\b\d+(?:\.\d+)?\s*(?:kW|hp)\b/i.test(message);
 
     const state: ConversationState = {
       ...regexState,
@@ -365,6 +365,13 @@ export async function POST(request: NextRequest) {
 
       const isReRecommend = lastEngineAction === "recommend" && engineResult.action === "recommend";
 
+      // Enrich context so the LLM can cite real specs (IE3, AUTOADAPT, IP55, etc.)
+      const topFeatures = (topPump?.features ?? []).slice(0, 3);
+      const featuresHint = topFeatures.length > 0
+        ? `\nKey features of ${topPumpName}: ${topFeatures.join("; ")}.`
+        : "";
+      const evalDomainHint = state.evalDomain ? `\nEval domain: ${state.evalDomain}.` : "";
+
       const dp = engineResult.dutyPoint;
       const specsAreUserProvided = state.flow_m3h != null && state.head_m != null;
       const dutyLine = dp
@@ -391,8 +398,8 @@ PUMP NAMES — copy these EXACTLY, character for character:
   • Best Match (primary recommendation): ${topPumpName}${confidence ? ` — ${confidence}` : ""}
 ${alternatePumps.length > 0 ? `  • Also visible as alternatives: ${alternatePumps.join(", ")}` : ""}
 Best Match saves approximately ${savings} (${monthlySavings}) vs a typical oversized installation.${competitorContext}
-${topPump?.oversizingNote || ""}
-Specs and ROI are in cards below — write a warm, specific 2-3 sentence explanation that references their actual situation (building type, problem, or specs).
+${topPump?.oversizingNote || ""}${featuresHint}${evalDomainHint}
+Specs and ROI are in cards below — write a warm, specific 2-3 sentence explanation that references their actual situation (building type, problem, or specs). If key features are listed above, weave the most relevant one in naturally.
 CRITICAL: Your response MUST name ${topPumpName} as the primary recommendation. Do NOT name any alternative as the top pick. These model names are the ONLY valid ones — never invent, abbreviate, or substitute.${isReRecommend ? `\nUser just updated their requirements — start with a brief 1-sentence acknowledgment of what changed, then explain ${topPumpName}.` : ""}${longConvoHint}`,
       });
       // Limit history to last 6 messages — enough conversational context without bleeding old pump names
