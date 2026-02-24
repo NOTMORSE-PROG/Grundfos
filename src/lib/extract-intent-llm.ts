@@ -51,11 +51,17 @@ Unit conversions (ALWAYS output in m³/h and m):
 
 Application guide:
 - domestic_water: single house/home/unit/condo, family/household water supply, home fixtures (shower, faucet, kitchen, garden)
-- water_supply: multi-unit or commercial building water distribution, pressure boosting for buildings, irrigation for farms/fields
+- water_supply: multi-unit or commercial building water distribution, pressure boosting for buildings, irrigation, industrial process water, industrial booster, process pump (general industrial fluid handling without chemicals)
 - heating: radiators, boilers, hot water circulation loops, underfloor heating, HVAC heating
 - cooling: chillers, cooling towers, AC chilled water loops, cold water circulation
 - wastewater: sewage, drainage, effluent, sump pits, basement flooding
-- dosing: chemical dosing, pH control, chlorination, precise metered flow
+- dosing: chemical dosing, pH control, chlorination, disinfection, water treatment chemical metering — ONLY when chemicals/reagents are explicitly mentioned
+
+CRITICAL for 'dosing': ONLY extract dosing when the user EXPLICITLY mentions chemical dosing, reagents, pH adjustment, chlorination, disinfection, or metered chemical injection. Terms like "motor drive", "IEC compliant motor", "industrial process", "process pump", "process water", "industrial booster", or "precise flow" alone do NOT mean dosing — omit the application field in those cases. When in doubt, output {} for application rather than guess "dosing".
+
+CRITICAL for motor-only queries: If the user specifies only motor power (kW or hp) with keywords like "motor drive", "IEC motor", "motor-driven pump", "industrial motor" — do NOT extract an application type. The motor spec alone doesn't tell you the application. Set only motor_kw and leave application out.
+
+CRITICAL for 'process': The word "process" in an industrial context (e.g., "process pump", "process water", "3 m³/h at 6 m for process") means industrial fluid handling → use application="water_supply" only if the rest of the context confirms industrial fluid transfer. It does NOT mean dosing.
 
 Natural language and Filipino/Tagalog hints:
 - "barely any water", "water is weak", "mababa ang tubig/pressure", "halos wala", "kulang tubig" → low_pressure

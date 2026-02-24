@@ -166,9 +166,14 @@ export async function POST(request: NextRequest) {
     // in long conversations where early facts fall outside the LLM message window.
     const regexState: ConversationState = extractIntent(allMessages);
 
-    // Apply domain detection to regexState before injection
+    // Apply domain detection to regexState before injection.
+    // Latest message is checked FIRST — if the user says "actually for hotwater instead",
+    // that overrides "dbs-heating" from earlier in the conversation. Only fall back to
+    // the full conversation text when the latest message has no domain signal.
     const allText = allMessages.map((m) => m.content).join(" ");
-    const detectedDomain = detectEvalDomain(allText);
+    const latestDomain = detectEvalDomain(message);
+    const allTextDomain = detectEvalDomain(allText);
+    const detectedDomain = latestDomain || allTextDomain;
     if (detectedDomain) regexState.evalDomain = detectedDomain;
 
     // Run LLM intent extraction and live CO2 fetch in parallel.
