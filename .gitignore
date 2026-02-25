@@ -48,6 +48,9 @@ seed_pump_catalog_summary.md
 score_report.json
 nul
 
+# Local debug scripts
+debug-*.ts
+
 # vercel
 .vercel
 

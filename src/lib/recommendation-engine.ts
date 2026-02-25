@@ -515,9 +515,17 @@ function calculateConfidence(
   // Example: SCALA2 for domestic water — 3.8× oversize but meets head → cap applies.
   // VSD cap only applies when the pump is ≤3× oversized — massively oversized VSD pumps
   // still waste energy even with speed control and should not receive inflated confidence.
-  const oversizeFactor = (isVSD && headRatio >= 1.0 && rawOversizeFactor <= 3.0)
+  const vsdAdjusted = (isVSD && headRatio >= 1.0 && rawOversizeFactor <= 3.0)
     ? Math.min(rawOversizeFactor, 1.8)
     : rawOversizeFactor;
+  // Head-constraint cap: when head is the binding requirement (headRatio 0.9–1.3) AND the
+  // pump appears flow-oversized (flowRatio > 3), the max_flow figure is misleading.
+  // A centrifugal pump's H-Q curve means at near-max head it naturally delivers low flow:
+  // e.g. TP 40-230/2 (max 18 m³/h at 0m head) at 18m head delivers ~3 m³/h — exactly right.
+  // Cap at 2.0 so the formula reflects this is a good head-matched selection, not 6× oversize.
+  const oversizeFactor = (headRatio >= 0.9 && headRatio <= 1.3 && flowRatio > 3)
+    ? Math.min(vsdAdjusted, 2.0)
+    : vsdAdjusted;
 
   let base = 95;
   // Gradual penalty for oversizing
@@ -1218,7 +1226,12 @@ function matchPumpsByDutyPoint(
     const featureText = (pump.features || []).join(" ").toLowerCase();
     const isVSD = /variable[\s-]?speed|autoadapt|auto[\s-]?adapt|integrated[\s-]?(?:inverter|frequency)|constant[\s-]?pressure/.test(featureText);
 
-    const { score: confidence, label } = calculateConfidence(flowRatio, headRatio, appMatch, eei, totalPrefBonus, isVSD, hasActualEEI);
+    // When rated-point scoring is active, pass rated ratios to confidence display too.
+    // Without this, CR 5-5 at 3/6 uses max-spec ratios (8/3=2.67, 30/6=5.0) → oversizeFactor=5
+    // → 30 base → floor of 40%. With rated point (2.9/3=0.967, 5.8/6=0.967) → base≈99.
+    const confFlow = useRatedPoint ? scoringFlow : flowRatio;
+    const confHead = useRatedPoint ? scoringHead : headRatio;
+    const { score: confidence, label } = calculateConfidence(confFlow, confHead, appMatch, eei, totalPrefBonus, isVSD, hasActualEEI);
 
     const totalScore = oversizeScore + appPenalty + eeiScore - (totalPrefBonus * 0.5);
 
@@ -1244,7 +1257,12 @@ function matchPumpsByDutyPoint(
   return topScored.map((s) => {
     const displayConf = Math.max(40, Math.min(prevConf - (prevConf < 100 ? 3 : 0), s.confidence));
     prevConf = displayConf;
-    return { pump: s.pump, confidence: displayConf, label: s.label };
+    // Derive label from displayConf (not stale s.label) so label always matches displayed %
+    const label =
+      displayConf >= 90 ? "Excellent Match" :
+      displayConf >= 75 ? "Good Match" :
+      displayConf >= 60 ? "Fair Match" : "Partial Match";
+    return { pump: s.pump, confidence: displayConf, label };
   });
 }
 

@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import {
   Star,
   FileText,
@@ -331,6 +331,7 @@ export function PumpRecommendationCard({ pump, rank = 1 }: PumpRecommendationCar
       {pump.pdf_url && (
         <Dialog open={datasheetOpen} onOpenChange={setDatasheetOpen}>
           <DialogContent className="max-w-4xl w-full h-[90vh] p-0 overflow-hidden flex flex-col">
+            <DialogTitle className="sr-only">Grundfos {pump.model} — Product Datasheet</DialogTitle>
             <div className="bg-grundfos-dark px-5 py-3 flex items-center justify-between flex-shrink-0">
               <div>
                 <p className="text-white font-semibold text-sm">Grundfos {pump.model} — Product Datasheet</p>
