@@ -288,11 +288,11 @@ export function PumpRecommendationCard({ pump, rank = 1 }: PumpRecommendationCar
           )}
 
           {/* ── Action buttons ───────────────────────────────────────── */}
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             <Button
               variant="default"
               size="sm"
-              className="flex-1 text-xs bg-grundfos-blue hover:bg-grundfos-blue/90 text-white h-8"
+              className="flex-1 min-w-[130px] text-xs bg-grundfos-blue hover:bg-grundfos-blue/90 text-white h-8"
               onClick={() => pump.pdf_url
                 ? setDatasheetOpen(true)
                 : window.open(`https://product-selection.grundfos.com/search?q=${encodeURIComponent(pump.model)}`, "_blank")
@@ -303,7 +303,7 @@ export function PumpRecommendationCard({ pump, rank = 1 }: PumpRecommendationCar
             </Button>
 
             {pump.pdf_url && (
-              <Button variant="outline" size="sm" className="flex-1 text-xs h-8" asChild>
+              <Button variant="outline" size="sm" className="flex-1 min-w-[130px] text-xs h-8" asChild>
                 <a href={pump.pdf_url} download>
                   <Download className="w-3.5 h-3.5 mr-1.5" />
                   Download Datasheet
@@ -316,12 +316,13 @@ export function PumpRecommendationCard({ pump, rank = 1 }: PumpRecommendationCar
               size="sm"
               onClick={handleGenerateReport}
               disabled={generating || !roi}
-              className="text-xs h-8 px-2.5"
+              className="flex-1 min-w-[120px] text-xs h-8"
               title="Generate ROI Report"
             >
               {generating
-                ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                : <FileText className="w-3.5 h-3.5" />}
+                ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" />
+                : <FileText className="w-3.5 h-3.5 mr-1.5" />}
+              Generate ROI
             </Button>
           </div>
         </div>
