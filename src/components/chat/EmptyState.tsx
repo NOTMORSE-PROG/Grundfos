@@ -1,6 +1,6 @@
 "use client";
 
-import { Droplets, Wrench, Ruler, Camera, Zap } from "lucide-react";
+import { Droplets, Wrench, Ruler, Zap } from "lucide-react";
 
 interface EmptyStateProps {
   onPromptClick: (prompt: string) => void;
@@ -18,11 +18,6 @@ const SUGGESTED_PROMPTS = [
     description: "Find the right pump for your specs",
   },
   {
-    icon: Camera,
-    text: "I have a photo of my pump nameplate",
-    description: "Upload and get an instant match",
-  },
-  {
     icon: Zap,
     text: "Help me right-size my pump to save energy",
     description: "Reduce oversizing and cut costs",
@@ -36,7 +31,10 @@ export function EmptyState({ onPromptClick }: EmptyStateProps) {
         <div className="w-12 h-12 rounded-xl bg-grundfos-blue flex items-center justify-center">
           <Droplets className="w-7 h-7 text-white" />
         </div>
-        <h1 className="text-3xl font-bold text-grundfos-dark">GrundMatch</h1>
+        <div className="flex flex-col leading-tight">
+          <h1 className="text-3xl font-bold text-grundfos-dark">Dewey</h1>
+          <span className="text-sm text-muted-foreground">by GrundMatch</span>
+        </div>
       </div>
 
       <p className="text-muted-foreground text-center mb-10 max-w-md">

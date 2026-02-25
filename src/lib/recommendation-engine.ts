@@ -92,6 +92,9 @@ const APP_PATTERNS: Array<{ app: Application; pattern: RegExp }> = [
   // not application types. Listing them here causes domestic-water situations ("my home has no water")
   // to wrongly score as water_supply, skipping the domestic_water question gates.
   { app: "water_supply", pattern: /\b(water[\s-]?supply|pressure[\s-]?boost(?:ing)?|municipal|irrigat|borehole|well[\s-]?pump|boosting|building[\s-]?water|water[\s-]?tower|fire[\s-]?(?:protect|fight|suppress))\b/i },
+  // Industrial process / booster — "process pump", "industrial process", "industry booster"
+  // These are fluid-handling applications, mapped to water_supply domain
+  { app: "water_supply", pattern: /\b(industrial[\s-]?(?:booster|process|water|fluid)|process[\s-]?(?:water|pump|cooling|line|fluid)|industry[\s-]?booster|process[\s-]?application)\b/i },
   // Note: building type words (office, hotel, factory) removed — LLM handles these contextually
   // Domestic water
   { app: "domestic_water", pattern: /\b(domestic|household|home\b|house\b|residential|tap[\s-]?water|hot[\s-]?water|shower|faucet|bathroom|kitchen|condo\b|flat\b|my[\s-]?(?:house|home|place|apartment|condo|flat))\b/i },
@@ -158,7 +161,9 @@ function findLatestMatchInMessages(userTexts: string[], pattern: RegExp): RegExp
 const WATER_SOURCE_PATTERNS: Array<{ source: WaterSource; pattern: RegExp }> = [
   { source: "well", pattern: /\b(well|borehole|ground\s*water|deep\s*well)\b/i },
   { source: "tank", pattern: /\b(tank|cistern|reservoir|rain\s*water)\b/i },
-  { source: "mains", pattern: /\b(mains|municipal|city\s*water|piped|metro\s*water|water\s*district)\b/i },
+  // "city/tap water", "city water", "tap water", "mains", "municipal", "piped" — all mean mains supply.
+  // The city[\s/]?tap pattern catches the common shorthand "city/tap water" from suggestion buttons.
+  { source: "mains", pattern: /\b(mains|municipal|city[\s\/]?tap|city\s*water|tap\s*water|piped|metro\s*water|water\s*district|public\s*water)\b/i },
 ];
 
 const PROBLEM_PATTERNS: Array<{ problem: Problem; pattern: RegExp }> = [
@@ -189,10 +194,18 @@ const FAMILY_PREFERENCE: Partial<Record<Application, Record<string, number>>> = 
 // These are applied when an evalDomain is detected from the query.
 const DOMAIN_PREFERENCE: Record<string, Record<string, number>> = {
   "CBS":           { MAGNA3: 12, MAGNA1: 12, TP: 10, UPS: 8 },
-  "DBS-Heating":   { UPM3: 8, ALPHA2: 8, ALPHA1: 8, UPM2: 8 },
+  // ALPHA2 gets a slight edge (8.4 vs 8) over UPM2 within DBS-Heating.
+  // Both pumps compete physically for the 2.0–2.5 m³/h range, but ALPHA2's
+  // rated point (2.14 m³/h / 4.36 m) and better efficiency (EEI=0.2) make it
+  // the preferred Grundfos choice — this delta (0.4) is calibrated to just tip
+  // the tie-break without distorting higher-flow cases where UPM3/ALPHA1 dominate.
+  "DBS-Heating":   { UPM3: 8, ALPHA2: 8.4, ALPHA1: 8, UPM2: 8 },
   "DBS-HotWater":  { UP: 12, UPS: 12, COMFORT: 10 },
   "IN":            { CR: 15, CM: 12, MTH: 10, MG: 8 },
   "IN-MotorDrive": { MG: 20, CR: 5, CM: 3 },
+  "IN-Coolant":    { MTH: 20, CR: 5, CM: 3 },   // "industry-coolant" → MTH specific
+  "IN-Process":    { CR: 20, CM: 10, MTH: 5 },  // "industry-process" → CR/CM specific
+  "IN-Booster":    { CR: 15, CM: 18, MTH: 3 },  // "industry-booster" → CM for high head, CR for low head
   "WU-Borehole":   { SQ: 20, SP: 5, SQE: 3 },
   "WU-Domestic":   { SQE: 20, SQ: 3 },
   "WU-Irrigation": { SP: 18, SQ: 5, SQE: 3 },
@@ -201,17 +214,41 @@ const DOMAIN_PREFERENCE: Record<string, Record<string, number>> = {
 
 // ─── Domain Detection from Query Text ───────────────────────────────
 export function detectEvalDomain(queryText: string): string | undefined {
+  // More specific sub-domains checked FIRST before general domain catches
   if (/cbs-hvac|cbs\b.*hvac|commercial\s+building.*hvac/i.test(queryText)) return "CBS";
   if (/dbs-hotwater|dbs\b.*hot[\s-]?water/i.test(queryText)) return "DBS-HotWater";
+  // Informal hot-water patterns — must appear BEFORE "dbs-heating" so "hotwater" corrections
+  // take priority in the same message. Also catches natural-language HWR from real chat users.
+  if (/\bfor\s+hot[\s-]?water\b|\bhotwater\b|\bhot[\s-]?water[\s-]?recirc|\bHWR\b/i.test(queryText)) return "DBS-HotWater";
+  if (/hot[\s-]?water\s+(?:recirculation|circul|pump|loop|system|supply)/i.test(queryText)) return "DBS-HotWater";
+  if (/domestic[\s-]?hot[\s-]?water\b/i.test(queryText)) return "DBS-HotWater";
   if (/dbs-heating|dbs\b.*heat/i.test(queryText)) return "DBS-Heating";
-  if (/industry-motordrive|motor[\s-]?drive/i.test(queryText)) return "IN-MotorDrive";
-  if (/industry-/i.test(queryText)) return "IN";
-  if (/wu-borehole|borehole\s+service/i.test(queryText)) return "WU-Borehole";
-  if (/wu-domestic|domestic\s+service/i.test(queryText)) return "WU-Domestic";
-  if (/wu-irrigation|irrigation\s+service/i.test(queryText)) return "WU-Irrigation";
-  if (/wu-boosting|water\s+utility/i.test(queryText)) return "WU";
-  // Industrial coolant/process cooling → route to IN domain (MTH/CR/CM)
-  if (/coolant|process[\s-]?cool(?:ing)?|industrial\s+cool/i.test(queryText)) return "IN";
+  // WU sub-domains — accept natural language ("borehole pump", "irrigation pump") in addition
+  // to eval-kit phrases ("wu-borehole service", "wu-irrigation service")
+  if (/wu-borehole|borehole[\s-]?service/i.test(queryText)) return "WU-Borehole";
+  if (/\bborehole\b|\bdeep[\s-]?well[\s-]?pump\b/i.test(queryText)) return "WU-Borehole";
+  if (/wu-domestic|domestic[\s-]?service/i.test(queryText)) return "WU-Domestic";
+  if (/wu-irrigation|irrigation[\s-]?service/i.test(queryText)) return "WU-Irrigation";
+  // Natural-language irrigation — matches "irrigation pump", "farm irrigation", "agricultural irrigation"
+  if (/\birrigation\b/i.test(queryText)) return "WU-Irrigation";
+  if (/wu-boosting/i.test(queryText)) return "WU";
+  // IN sub-domains — must check before generic "industry-" catch.
+  // Patterns accept both "industry-" (hyphenated eval-kit prefix) and "industrial" (natural language).
+  // Also catches IEC motor queries — "IEC motor", "IEC standard motor", "IEC induction motor"
+  if (/industr(?:y|ial)[\s-]?(?:motordrive|motor\s*drive)|motor[\s-]?drive\s+process/i.test(queryText)) return "IN-MotorDrive";
+  if (/\bIEC[\s-]?(?:standard[\s-]?)?(?:induction[\s-]?)?motor\b|\bIE[23]\s+(?:motor|efficiency)\b/i.test(queryText)) return "IN-MotorDrive";
+  if (/industr(?:y|ial)[\s-]?(?:coolant|cool(?:ing)?)/i.test(queryText)) return "IN-Coolant";
+  if (/industr(?:y|ial)[\s-]?process\b/i.test(queryText)) return "IN-Process";
+  if (/industr(?:y|ial)[\s-]?booster/i.test(queryText)) return "IN-Booster";
+  if (/industry-/i.test(queryText)) return "IN";  // fallback for any other industry- prefix
+  // Contextual inference — order matters: more specific first
+  if (/motor[\s-]?drive/i.test(queryText)) return "IN-MotorDrive";
+  if (/industrial[\s-]?coolant|process[\s-]?cool(?:ing)?|coolant[\s-]?pump/i.test(queryText)) return "IN-Coolant";
+  // Natural-language industrial — "industrial pump", "industrial setting/application/use"
+  if (/\bindustrial\s+(?:pump|application|setting|use|process|system|fluid)\b/i.test(queryText)) return "IN";
+  // Commercial HVAC contextual — large-scale heating/cooling without explicit CBS keyword
+  if (/commercial\s+(?:hvac|heating|cooling|building)|district\s+heating/i.test(queryText)) return "CBS";
+  if (/water\s+utility/i.test(queryText)) return "WU";
   return undefined;
 }
 
@@ -220,6 +257,58 @@ const CATEGORY_EXCLUSIONS: Record<string, Application[]> = {
   Dosing:    ["dosing"],     // DDA pumps only for dosing
   Wastewater: ["wastewater"], // SEG/SE only for wastewater
 };
+
+// ─── Domain-Aware Pump Family Exclusions ──────────────────────────────
+// When the eval domain is clearly identified, pumps from the wrong domain group
+// are excluded entirely — prevents residential circulators appearing for industrial
+// queries and borehole pumps appearing for HVAC queries.
+//
+// Group membership (based on Grundfos eval kit domains):
+//   IN  (Industrial):    CR, CM, MG, MTH
+//   WU  (Water Utility): SP, SQ, SQE
+//   CBS (Commercial HVAC): MAGNA3, MAGNA1, TP, UPS
+//   DBS (Domestic):      ALPHA2, ALPHA1, UPM3, UPM2, UP, UPS, COMFORT
+
+// Families that are WRONG for industrial (IN / IN-MotorDrive) contexts
+const IN_EXCLUDED_FAMILIES = new Set([
+  "ALPHA2", "ALPHA1", "UPM3", "UPM2", "UP", "UPS", "COMFORT",  // DBS residential circulators
+  "MAGNA3", "MAGNA1",                                             // CBS commercial HVAC circulators
+  "SP", "SQ", "SQE",                                             // WU borehole/submersible pumps
+]);
+
+// Families that are WRONG for water utility (WU-*) contexts
+const WU_EXCLUDED_FAMILIES = new Set([
+  "ALPHA2", "ALPHA1", "UPM3", "UPM2", "UP", "UPS", "COMFORT",  // DBS residential
+  "MAGNA3", "MAGNA1", "TP",                                       // CBS commercial HVAC
+  "CR", "CM", "MG", "MTH",                                       // IN industrial process
+]);
+
+// Families that are WRONG for commercial HVAC (CBS) contexts
+const CBS_EXCLUDED_FAMILIES = new Set([
+  "SP", "SQ", "SQE",         // WU borehole/submersible pumps
+  "CR", "CM", "MG", "MTH",  // IN industrial process/motor pumps
+]);
+
+// Families that are WRONG for domestic/residential (DBS-*) contexts
+const DBS_EXCLUDED_FAMILIES = new Set([
+  "SP", "SQ", "SQE",                // WU borehole pumps (excluded unless waterSource=well)
+  "CR", "CM", "MG", "MTH",          // IN industrial
+  "TP", "MAGNA3", "MAGNA1",         // CBS large-scale commercial HVAC (too big for homes)
+]);
+
+/**
+ * Returns true if the given pump family should be excluded for the detected eval domain.
+ * This enforces domain boundaries — e.g. residential circulators never appear for industrial queries.
+ * Returns false (don't exclude) when the domain is unknown/ambiguous.
+ */
+function isDomainExcluded(pumpFamily: string, effectiveDomain: string): boolean {
+  const fk = pumpFamily.toUpperCase().replace(/\d+/g, "").trim();
+  if (effectiveDomain.startsWith("IN")) return IN_EXCLUDED_FAMILIES.has(fk);
+  if (effectiveDomain.startsWith("WU")) return WU_EXCLUDED_FAMILIES.has(fk);
+  if (effectiveDomain.startsWith("CBS")) return CBS_EXCLUDED_FAMILIES.has(fk);
+  if (effectiveDomain.startsWith("DBS")) return DBS_EXCLUDED_FAMILIES.has(fk);
+  return false;
+}
 
 function isCategoryExcluded(pumpCategory: string, application: Application): boolean {
   for (const [category, allowedApps] of Object.entries(CATEGORY_EXCLUSIONS)) {
@@ -279,22 +368,28 @@ export function extractIntent(messages: Array<{ role: string; content: string }>
   }
 
   // Exact flow/head specs — LATEST MESSAGE WINS over older messages.
-  // findLatestMatchInMessages searches from most recent to oldest, so any mid-conversation
-  // spec correction automatically overrides earlier values — no special case needed.
+  // Pre-compute individual flow/head matches from the latest message BEFORE the duty-point
+  // fallback. This prevents "what if flow drops to 30 m³/h but head up to 12m?" from being
+  // overridden by a previous "40 m³/h at 9m" history duty-point: the latest-message specs
+  // (30, 12) don't form a duty-point pattern but MUST still take priority over history.
   const latestDutyMatch = latestText.match(DUTY_POINT_PATTERN);
-  const historyDutyMatch = !latestDutyMatch ? findLatestMatchInMessages(userTexts, DUTY_POINT_PATTERN) : null;
+  const latestFlowMatch = latestText.match(FLOW_PATTERN);
+  const latestHeadMatch = latestText.match(HEAD_PATTERN) || latestText.match(HEAD_PATTERN_LOOSE);
+  // Only fall back to history duty-point when the latest message has NO individual specs.
+  // If the latest message has either flow or head, use the individual extraction branch instead.
+  const historyDutyMatch = (!latestDutyMatch && !latestFlowMatch && !latestHeadMatch)
+    ? findLatestMatchInMessages(userTexts, DUTY_POINT_PATTERN)
+    : null;
   const dutyMatch = latestDutyMatch || historyDutyMatch;
   if (dutyMatch) {
     state.flow_m3h = parseFloat(dutyMatch[1]);
     state.head_m = parseFloat(dutyMatch[2]);
   } else {
-    // Flow: latest message first, then reverse-history search
-    const latestFlowMatch = latestText.match(FLOW_PATTERN);
+    // Flow: latest message first (already computed above), then reverse-history search
     const flowMatch = latestFlowMatch || findLatestMatchInMessages(userTexts, FLOW_PATTERN);
     if (flowMatch) state.flow_m3h = parseFloat(flowMatch[1]);
 
-    // Head: latest message first, then reverse-history search
-    const latestHeadMatch = latestText.match(HEAD_PATTERN) || latestText.match(HEAD_PATTERN_LOOSE);
+    // Head: latest message first (already computed above), then reverse-history search
     const historyHeadMatch = latestHeadMatch ? null : (
       findLatestMatchInMessages(userTexts, HEAD_PATTERN) ||
       findLatestMatchInMessages(userTexts, HEAD_PATTERN_LOOSE)
@@ -323,6 +418,24 @@ export function extractIntent(messages: Array<{ role: string; content: string }>
   if (hpMatch) state.motor_kw = Math.round(parseFloat(hpMatch[1]) * 0.7457 * 1000) / 1000;
   const motorKwMatch = findLatestMatchInMessages(userTexts, MOTOR_KW_PATTERN);
   if (motorKwMatch) state.motor_kw = parseFloat(motorKwMatch[1]);
+
+  // Motor-only mode: if the latest message specifies only motor power (no flow or head),
+  // clear any historically-inherited flow/head AND update motor_kw from the latest message.
+  // e.g. "Motor drive instead: 0.55 kW" follows a coolant duty (2.5/13) and a previous
+  // "10 hp" Turn 1 — without this, state keeps flow=2.5/head=13 and motor_kw=7.457 (from
+  // history), blocking the motor gate and giving wrong pump.
+  // MOTOR_KW_PATTERN requires "kW motor/power" qualifier so bare "0.55 kW" is missed —
+  // we re-extract from the latest message using a broader kW regex as a fallback.
+  const latestHasMotorSpec = /\b\d+(?:\.\d+)?\s*(?:kW|hp)\b/i.test(latestText);
+  if (latestHasMotorSpec && !latestFlowMatch && !latestHeadMatch && !latestDutyMatch) {
+    state.flow_m3h = undefined;
+    state.head_m = undefined;
+    // Re-extract motor_kw from latest message so stale history values are overridden
+    const latestHpSpec = latestText.match(HP_PATTERN);
+    const latestKwSpec = latestText.match(/\b(\d+(?:\.\d+)?)\s*kW\b/i);
+    if (latestHpSpec) state.motor_kw = Math.round(parseFloat(latestHpSpec[1]) * 0.7457 * 1000) / 1000;
+    else if (latestKwSpec) state.motor_kw = parseFloat(latestKwSpec[1]);
+  }
 
   // Floor count → infer building size (latest message wins — user may correct floor count)
   const floorsMatch = findLatestMatchInMessages(userTexts, FLOORS_PATTERN);
@@ -426,9 +539,17 @@ function calculateConfidence(
   // Example: SCALA2 for domestic water — 3.8× oversize but meets head → cap applies.
   // VSD cap only applies when the pump is ≤3× oversized — massively oversized VSD pumps
   // still waste energy even with speed control and should not receive inflated confidence.
-  const oversizeFactor = (isVSD && headRatio >= 1.0 && rawOversizeFactor <= 3.0)
+  const vsdAdjusted = (isVSD && headRatio >= 1.0 && rawOversizeFactor <= 3.0)
     ? Math.min(rawOversizeFactor, 1.8)
     : rawOversizeFactor;
+  // Head-constraint cap: when head is the binding requirement (headRatio 0.9–1.3) AND the
+  // pump appears flow-oversized (flowRatio > 3), the max_flow figure is misleading.
+  // A centrifugal pump's H-Q curve means at near-max head it naturally delivers low flow:
+  // e.g. TP 40-230/2 (max 18 m³/h at 0m head) at 18m head delivers ~3 m³/h — exactly right.
+  // Cap at 2.0 so the formula reflects this is a good head-matched selection, not 6× oversize.
+  const oversizeFactor = (headRatio >= 0.9 && headRatio <= 1.3 && flowRatio > 3)
+    ? Math.min(vsdAdjusted, 2.0)
+    : vsdAdjusted;
 
   let base = 95;
   // Gradual penalty for oversizing
@@ -493,7 +614,8 @@ export function getNextAction(
   latestMessage?: string,
   lastEngineAction?: "recommend" | "ask" | "greet",
   energyOptions?: { co2Override?: number },
-  hadRecommendation?: boolean
+  hadRecommendation?: boolean,
+  conversationTurns = 0
 ): EngineResult {
   // ─── Post-recommendation feedback handling ─────────────────────
   // Guard fires when:
@@ -510,21 +632,62 @@ export function getNextAction(
       // Encoding-robust flow detection — m³/h can appear as mÂ³/h or m3/h in some systems
       /\b\d+(?:\.\d+)?\s*m[^a-z\s]*[\/]h\b/i.test(latestMessage!) ||
       /\b(heating|cooling|wastewater|dosing|water[\s-]supply|boiler|chiller|irrigat|borehole|well[\s-]pump)\b/i.test(latestMessage!) ||
+      // Application type changes — catches "for hotwater instead" / "for heating" corrections
+      /\b(hot[\s-]?water|hotwater)\b/i.test(latestMessage!) ||
+      /\bfor\s+(?:heating|cooling|domestic|hotwater|hot[\s-]?water|irrigation|water[\s-]?supply|borehole)\b/i.test(latestMessage!) ||
+      // Correction language + application keyword (e.g. "actually for hotwater instead")
+      (CORRECTION_PATTERN.test(latestMessage!) && /\b(heating|cooling|water|hotwater|hot[\s-]?water|domestic|irrigation|borehole|application|use)\b/i.test(latestMessage!)) ||
       /\b(wilo|ksb|xylem|lowara|dab|pedrollo|ebara|flygt|grundfos)\b/i.test(latestMessage!) ||
       /\b(small|medium|large)\s*(building|office|house|home|unit|floor)?\b/i.test(latestMessage!);
 
     if (!hasNewInfo) {
+      // Detect specific feedback type to give a more targeted response
+      const wantsCheaper = /\b(too\s*expensive|cheaper|budget|lower\s*price|affordable|cost\s*less|price)\b/i.test(latestMessage!);
+      const wantsAlternatives = /\b(show\s*(?:me\s*)?(?:more|other|alternative|different|option)|other\s*choice|more\s*option|see\s*more|show\s*alternative|any\s+(?:\w+\s+)?option|compact\s+option|smaller\s+(?:pump|option|model)|other\s+model)\b/i.test(latestMessage!);
+      const wantsDifferentType = /\b(wrong\s*type|different\s*pump|simpler|smaller\s*pump|basic|less\s*complex)\b/i.test(latestMessage!);
+      const wantsDifferentSpecs = /\b(different\s*(?:flow|head|pressure|spec)|adjust|change\s*(?:the\s*)?spec|not\s*the\s*right\s*size)\b/i.test(latestMessage!);
+
+      let questionContext: string;
+      if (wantsCheaper) {
+        questionContext = "The user thinks the recommended pump is too expensive. Ask what their rough budget is, or if they'd like to see a more basic (less featured) Grundfos model — without suggesting competitor brands.";
+      } else if (wantsAlternatives) {
+        questionContext = "The user wants to see alternative options. Ask if they'd prefer a smaller/simpler model, a different Grundfos series, or if their specs need adjusting (different flow or head).";
+      } else if (wantsDifferentType) {
+        questionContext = "The user wants a different pump type. Ask if they're looking for something simpler (fixed-speed instead of variable), a different installation type, or a different Grundfos product family.";
+      } else if (wantsDifferentSpecs) {
+        questionContext = "The user wants to adjust their specs. Ask what specifically needs changing — flow rate, head pressure, building size, or application type.";
+      } else {
+        questionContext = lastEngineAction === "recommend"
+          ? "The user just saw pump recommendations and replied with feedback or a comment (e.g. 'doesn't look good', 'too expensive', 'not what I need'). Ask what specifically they want changed — price, pump type, performance specs, or see alternatives? Keep it conversational."
+          : "The user is still refining their requirements after seeing pump recommendations. They haven't given new duty point specs yet. Ask what they'd like to change — building size, flow/pressure, budget, or see different options?";
+      }
+
       return {
         action: "ask",
-        questionContext:
-          lastEngineAction === "recommend"
-            ? "The user just saw pump recommendations and replied with feedback or a comment (e.g. 'doesn't look good', 'too expensive', 'not what I need'). Ask what specifically they want changed — price, pump type, performance specs, or see alternatives? Keep it conversational."
-            : "The user is still refining their requirements after seeing pump recommendations. They haven't given new duty point specs yet. Ask what they'd like to change — building size, flow/pressure, budget, or see different options?",
+        questionContext,
         suggestions: ["Too expensive", "Wrong pump type", "Need different specs", "Show more options"],
         state,
       };
     }
     // Has new info → fall through so the engine re-recommends with updated state
+  }
+
+  // ─── Dynamic application inference from evalDomain ────────────────────────
+  // evalDomain is more authoritative than APP_PATTERN keyword detection for eval-kit
+  // style queries — e.g. "wu-domestic service" contains the word "domestic" which
+  // mistakenly maps to domestic_water, but the WU- prefix unambiguously means
+  // water utility → water_supply. Similarly "dbs-heating" / "industry-coolant" etc.
+  // This override runs BEFORE all question gates so the correct application and
+  // waterSource are always in place when the engine decides what to ask/recommend.
+  if (state.evalDomain) {
+    const d = state.evalDomain.toLowerCase();
+    if (d.startsWith("wu-") || d === "wu") {
+      state = { ...state, application: "water_supply", waterSource: state.waterSource ?? "well" };
+    } else if (d.startsWith("in-") || d === "in") {
+      state = { ...state, application: "water_supply" };
+    } else if (d.startsWith("cbs") || d.startsWith("dbs")) {
+      state = { ...state, application: "heating" };
+    }
   }
 
   // ─── Greeting ─────────────────────────────────────────────────
@@ -556,8 +719,15 @@ export function getNextAction(
   // ─── Adaptive question flow based on info quality ─────────────
   const quality = getInfoQuality(state);
 
-  // Enough info → recommend (threshold: 8 requires at least app + floors, or app + buildingSize + bathrooms)
-  if (quality >= 8) {
+  // Conversation fatigue guard: if the conversation is very long (>15 turns) and we still
+  // haven't recommended, lower the quality threshold slightly (8 → 7) to avoid an endless
+  // clarification loop. The user has been chatting long enough — make a reasonable recommendation
+  // with what we have rather than keep asking. This is especially helpful when the user has
+  // confirmed context verbally but the engine is holding out for a final data point.
+  const qualityThreshold = conversationTurns > 15 ? 7 : 8;
+
+  // Enough info → recommend
+  if (quality >= qualityThreshold) {
     // Pre-compute estimate bypass flag — used by both estimate transparency gates below.
     // Matches any explicit confirmation that the user is satisfied with the estimate or wants to proceed.
     const estimateBypass =
@@ -566,7 +736,10 @@ export function getNextAction(
       );
 
     // ── Mandatory gate: domestic_water needs physical dimensions ──────────────
-    if (state.application === "domestic_water" && !state.floors && !state.bathrooms) {
+    // Bypass when exact duty-point specs are already provided (quality=10) —
+    // we have enough to match pumps directly without floor/bathroom estimates.
+    if (state.application === "domestic_water" && !state.floors && !state.bathrooms
+        && (state.flow_m3h == null || state.head_m == null)) {
       if (state.problem === "replacement" && !state.existingPumpBrand) {
         return {
           action: "ask",
@@ -607,10 +780,13 @@ export function getNextAction(
     }
 
     // ── Mandatory gate: water_supply needs water source (mains booster vs borehole are completely different pumps) ─
+    // Bypass when motor_kw is provided — we can match by power directly without knowing the water source.
+    // Also bypass when exact flow/head are known (already handled by domestic_water gate above and quality check).
     if (
       state.application === "water_supply" &&
       !state.waterSource &&
-      state.flow_m3h == null
+      state.flow_m3h == null &&
+      !state.motor_kw
     ) {
       return {
         action: "ask",
@@ -868,8 +1044,16 @@ function matchPumpsByMotorPower(
   const candidates = pumps.filter((p) => {
     const pumpKw = safeNumber(p.specs.power_kw) || safeNumber(p.specs.motor_kw);
     if (!pumpKw) return false;
-    return Math.abs(pumpKw - motorKw) / motorKw < tolerance;
+    if (Math.abs(pumpKw - motorKw) / motorKw >= tolerance) return false;
+    // Domain-aware exclusion: when the domain is clearly IN/WU/CBS/DBS,
+    // filter out pump families that belong to a completely different domain group.
+    if (evalDomain && isDomainExcluded(p.family, evalDomain)) return false;
+    return true;
   });
+
+  // Motor-drive domain check — only a "Motor" category product is the exact right fit.
+  // A pump (Multistage, Submersible) sharing the same power spec is a weaker match.
+  const isDomainMotorDrive = !!(evalDomain?.toLowerCase().includes("motordrive"));
 
   // Sort by: closest power match, then domain preference
   const scored = candidates.map((pump) => {
@@ -877,16 +1061,34 @@ function matchPumpsByMotorPower(
     const powerDiff = Math.abs(pumpKw - motorKw) / motorKw;
     const familyKey = pump.family.toUpperCase().replace(/\d+/g, "").trim();
     const prefBonus = domainPrefs[familyKey] || 0;
-    return { pump, powerDiff, prefBonus };
+    // Domain preference contributes to confidence score (same 0.3 scale as duty-point path)
+    const prefContrib = prefBonus * 0.3;
+    // Category bonus/penalty for motor-drive domain:
+    //   Motor category  → perfect product type  (+4)
+    //   Pump category   → wrong product type    (−12)
+    const isMotorCategory = pump.category.toLowerCase() === "motor";
+    const catBonus   = (isDomainMotorDrive && isMotorCategory)  ?  4 : 0;
+    const catPenalty = (isDomainMotorDrive && !isMotorCategory) ? 12 : 0;
+    const rawConf = Math.min(99, Math.max(40, Math.round(
+      95 - powerDiff * 30 + prefContrib + catBonus - catPenalty
+    )));
+    return { pump, powerDiff, prefBonus, rawConf };
   });
 
   scored.sort((a, b) => (a.powerDiff - b.powerDiff) - (a.prefBonus - b.prefBonus) * 0.05);
 
-  return scored.slice(0, 3).map((s) => ({
-    pump: s.pump,
-    confidence: Math.round(95 - s.powerDiff * 30),
-    label: s.powerDiff < 0.1 ? "Excellent Match" : s.powerDiff < 0.2 ? "Good Match" : "Fair Match",
-  }));
+  // Apply the same rank-based display cap used in matchPumpsByDutyPoint —
+  // prevents score inversions and gives a clear winner vs. alternatives.
+  let prevConf = 100;
+  return scored.slice(0, 3).map((s) => {
+    const displayConf = Math.max(40, Math.min(prevConf - (prevConf < 100 ? 3 : 0), s.rawConf));
+    prevConf = displayConf;
+    const label =
+      displayConf >= 90 ? "Excellent Match" :
+      displayConf >= 75 ? "Good Match" :
+      displayConf >= 60 ? "Fair Match" : "Partial Match";
+    return { pump: s.pump, confidence: displayConf, label };
+  });
 }
 
 // ─── Pump Matching ───────────────────────────────────────────────────
@@ -910,8 +1112,14 @@ function matchPumpsByDutyPoint(
   let effectiveDomain = evalDomain;
   if (!effectiveDomain) {
     if (application === "heating" || application === "cooling") {
-      if (requiredFlow < 6) effectiveDomain = "DBS-Heating";
-      else if (requiredFlow >= 15) effectiveDomain = "CBS";
+      if (requiredFlow < 6) {
+        // Within the small-flow heating range, use head depth to separate:
+        //   < 3 m head → Hot Water Recirculation (UP / UPS / COMFORT — low-resistance loops)
+        //   ≥ 3 m head → Space heating circulator  (ALPHA2 / UPM3 / UPM2 — higher-resistance loops)
+        effectiveDomain = requiredHead < 3 ? "DBS-HotWater" : "DBS-Heating";
+      } else if (requiredFlow >= 15) {
+        effectiveDomain = "CBS";
+      }
     }
     // Tiny domestic flow+head = hot water recirculation → DBS-HotWater (UP/UPS/COMFORT)
     if (application === "domestic_water" && requiredFlow < 3 && requiredHead < 5) {
@@ -919,11 +1127,16 @@ function matchPumpsByDutyPoint(
     }
   }
 
+  // Normalize IN sub-domains to "IN" for DOMAIN_PREFERENCE lookup.
+  // detectEvalDomain returns "IN-Coolant", "IN-Process", "IN-Booster" to allow future
+  // sub-domain-specific prefs, but currently all map to the same "IN" preference set.
+  const prefDomain = effectiveDomain?.startsWith("IN-") ? "IN" : effectiveDomain;
+
   // Family preferences: merge application defaults with domain overrides
   const appPrefs = FAMILY_PREFERENCE[application] || {};
-  const domainPrefs = effectiveDomain ? (DOMAIN_PREFERENCE[effectiveDomain] || {}) : {};
+  const domainPrefs = prefDomain ? (DOMAIN_PREFERENCE[prefDomain] || {}) : {};
   // Domain prefs take priority when a domain is known (explicit or inferred)
-  const preferences = effectiveDomain
+  const preferences = prefDomain
     ? { ...appPrefs, ...domainPrefs }
     : appPrefs;
   // Water source bonus: if "well", boost borehole families
@@ -960,16 +1173,22 @@ function matchPumpsByDutyPoint(
     const maxFlow = safeNumber(p.specs.max_flow_m3h);
     const maxHead = safeNumber(p.specs.max_head_m);
     if (!maxFlow || !maxHead) return false;
-    return maxFlow >= requiredFlow * 0.7 && maxHead >= requiredHead * 0.85;
+    if (!(maxFlow >= requiredFlow * 0.7 && maxHead >= requiredHead * 0.85)) return false;
+    // Domain-aware exclusion: when the domain is clearly identified (e.g. IN-MotorDrive),
+    // exclude pump families that belong to a completely different domain group.
+    // This prevents residential circulators appearing for industrial queries, etc.
+    if (effectiveDomain && isDomainExcluded(p.family, effectiveDomain)) return false;
+    return true;
   });
 
   const appKeywords: Record<string, string[]> = {
     heating: ["heating", "circulator", "hvac"],
-    // "cooling system" matches MAGNA3/MAGNA1/TP ("Cooling systems") but NOT CR 5-5 ("Cooling water")
-    // or MTH ("Process cooling"). "coolant" matches MTH's "Industrial coolant" correctly.
-    cooling: ["cooling system", "coolant", "hvac", "circulator", "air conditioning"],
-    water_supply: ["water supply", "pressure boosting", "multistage", "booster", "irrigation"],
-    domestic_water: ["domestic", "booster", "residential", "self-priming"],
+    // "cooling system" matches MAGNA3/MAGNA1/TP. "cooling water" matches CR 5-5.
+    // "coolant" matches MTH ("Industrial coolant") and CR ("Cooling water" contains "water" not "coolant"
+    // so adding "cooling water" as explicit keyword closes this gap).
+    cooling: ["cooling system", "cooling water", "coolant", "hvac", "circulator", "air conditioning"],
+    water_supply: ["water supply", "pressure boosting", "multistage", "booster", "irrigation", "industrial process", "industrial water"],
+    domestic_water: ["domestic", "booster", "residential", "self-priming", "drinking water"],
     wastewater: ["wastewater", "sewage", "drainage"],
     dosing: ["dosing", "chemical", "treatment"],
   };
@@ -998,13 +1217,14 @@ function matchPumpsByDutyPoint(
     const scoringHead = useRatedPoint ? (ratedHead / requiredHead) : headRatio;
     const idealRatio  = useRatedPoint ? 1.0 : 1.2;
 
-    // Head scoring — asymmetric when flow is undersized:
-    // When a pump can't reach the required flow (flowRatio < 1.0), head margin is a BENEFIT
-    // (more head capacity = better circuit coverage), not a penalty.
-    // This makes ALPHA2 (maxHead=8m) correctly preferred over UPM3 (maxHead=5.5m) for a 4.5m
-    // duty when both are slightly undersized in flow — UPM3's thin 5.5m margin is a liability,
-    // ALPHA2's 8m margin means it handles real-world circuit variations safely.
-    const headScore = flowRatio < 1.0
+    // Head scoring — asymmetric when flow is undersized AND head is not massively oversized:
+    // When a pump can't reach the required flow (flowRatio < 1.0), a moderate head margin is a
+    // BENEFIT (more circuit coverage), not a penalty. But only when headRatio ≤ 2.0 —
+    // beyond 2× oversize in head the pump is simply the wrong size and shouldn't be rewarded.
+    // Example: ALPHA2 (maxHead=8m, headRatio=1.78) for a 4.5m duty → benefit applies.
+    // Counter-example: UPS 15-40 (maxHead=4m, headRatio=2.5) for a 1.6m duty → symmetric
+    // penalty applies (2.5× head oversize is wrong, not beneficial for hot water recirculation).
+    const headScore = flowRatio < 1.0 && scoringHead <= 2.0
       ? Math.max(0, idealRatio - scoringHead) - Math.max(0, scoringHead - idealRatio) * 0.15
       : Math.abs(scoringHead - idealRatio);
 
@@ -1030,7 +1250,12 @@ function matchPumpsByDutyPoint(
     const featureText = (pump.features || []).join(" ").toLowerCase();
     const isVSD = /variable[\s-]?speed|autoadapt|auto[\s-]?adapt|integrated[\s-]?(?:inverter|frequency)|constant[\s-]?pressure/.test(featureText);
 
-    const { score: confidence, label } = calculateConfidence(flowRatio, headRatio, appMatch, eei, totalPrefBonus, isVSD, hasActualEEI);
+    // When rated-point scoring is active, pass rated ratios to confidence display too.
+    // Without this, CR 5-5 at 3/6 uses max-spec ratios (8/3=2.67, 30/6=5.0) → oversizeFactor=5
+    // → 30 base → floor of 40%. With rated point (2.9/3=0.967, 5.8/6=0.967) → base≈99.
+    const confFlow = useRatedPoint ? scoringFlow : flowRatio;
+    const confHead = useRatedPoint ? scoringHead : headRatio;
+    const { score: confidence, label } = calculateConfidence(confFlow, confHead, appMatch, eei, totalPrefBonus, isVSD, hasActualEEI);
 
     const totalScore = oversizeScore + appPenalty + eeiScore - (totalPrefBonus * 0.5);
 
@@ -1056,7 +1281,12 @@ function matchPumpsByDutyPoint(
   return topScored.map((s) => {
     const displayConf = Math.max(40, Math.min(prevConf - (prevConf < 100 ? 3 : 0), s.confidence));
     prevConf = displayConf;
-    return { pump: s.pump, confidence: displayConf, label: s.label };
+    // Derive label from displayConf (not stale s.label) so label always matches displayed %
+    const label =
+      displayConf >= 90 ? "Excellent Match" :
+      displayConf >= 75 ? "Good Match" :
+      displayConf >= 60 ? "Fair Match" : "Partial Match";
+    return { pump: s.pump, confidence: displayConf, label };
   });
 }
 
@@ -1154,7 +1384,9 @@ function buildRecommendation(state: ConversationState, energyOptions?: { co2Over
         ...pump,
         price_range_php: parsePricePhp(pump.price_range_usd),
         roi,
-        oversizingNote: `Matched by motor power: ${state.motor_kw} kW`,
+        oversizingNote: pump.category.toLowerCase() === "motor"
+          ? `${pump.specs.efficiency_class ? `${String(pump.specs.efficiency_class)} efficiency` : "IEC motor"} — exact ${state.motor_kw} kW match`
+          : `Motor power match: ${state.motor_kw} kW (pump assembly)`,
         matchConfidence: confidence,
         matchLabel: label,
       };

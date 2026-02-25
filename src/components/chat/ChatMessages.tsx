@@ -5,7 +5,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { MessageBubble } from "./MessageBubble";
 import { EmptyState } from "./EmptyState";
 import type { Message } from "@/lib/chat-store";
-import { Loader2, ArrowUp, ArrowDown } from "lucide-react";
+import { ArrowUp, ArrowDown } from "lucide-react";
 
 interface ChatMessagesProps {
   messages: Message[];
@@ -94,25 +94,6 @@ export function ChatMessages({
               isStreaming={isStreaming}
             />
           ))}
-
-          {/* Thinking indicator — shows while streaming and last assistant message is still empty */}
-          {isStreaming &&
-            messages[messages.length - 1]?.role === "assistant" &&
-            !messages[messages.length - 1]?.content && (
-              <div className="flex gap-3 mb-6">
-                <div className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0 bg-grundfos-light border border-grundfos-blue/20">
-                  <Loader2 className="w-4 h-4 text-grundfos-blue animate-spin" />
-                </div>
-                <div className="bg-card border border-border rounded-2xl rounded-tl-md px-4 py-3 flex items-center gap-2">
-                  <div className="flex gap-1">
-                    <span className="w-1.5 h-1.5 bg-grundfos-blue rounded-full animate-bounce [animation-delay:0ms]" />
-                    <span className="w-1.5 h-1.5 bg-grundfos-blue rounded-full animate-bounce [animation-delay:120ms]" />
-                    <span className="w-1.5 h-1.5 bg-grundfos-blue rounded-full animate-bounce [animation-delay:240ms]" />
-                  </div>
-                  <span className="text-xs text-muted-foreground">Thinking…</span>
-                </div>
-              </div>
-            )}
 
           <div ref={bottomRef} />
         </div>

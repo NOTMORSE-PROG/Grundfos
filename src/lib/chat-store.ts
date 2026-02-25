@@ -22,6 +22,7 @@ interface ChatState {
   isStreaming: boolean;
   sessionId: string;
   sidebarOpen: boolean;
+  conversationsVersion: number;
 
   setMessages: (messages: Message[]) => void;
   addMessage: (message: Message) => void;
@@ -29,9 +30,11 @@ interface ChatState {
   replaceLastMessageContent: (content: string) => void;
   updateLastMessageMetadata: (metadata: Record<string, unknown>) => void;
   setConversations: (conversations: Conversation[]) => void;
+  addConversation: (conv: Conversation) => void;
   setCurrentConversationId: (id: string | null) => void;
   setIsStreaming: (streaming: boolean) => void;
   setSidebarOpen: (open: boolean) => void;
+  bumpConversationsVersion: () => void;
   newChat: () => void;
 }
 
@@ -52,6 +55,7 @@ export const useChatStore = create<ChatState>((set) => ({
   isStreaming: false,
   sessionId: typeof window !== "undefined" ? getSessionId() : "",
   sidebarOpen: false,
+  conversationsVersion: 0,
 
   setMessages: (messages) => set({ messages }),
   addMessage: (message) =>
@@ -84,9 +88,15 @@ export const useChatStore = create<ChatState>((set) => ({
       return { messages: msgs };
     }),
   setConversations: (conversations) => set({ conversations }),
+  addConversation: (conv) =>
+    set((state) => ({
+      conversations: [conv, ...state.conversations.filter((c) => c.id !== conv.id)],
+    })),
   setCurrentConversationId: (id) => set({ currentConversationId: id }),
   setIsStreaming: (streaming) => set({ isStreaming: streaming }),
   setSidebarOpen: (open) => set({ sidebarOpen: open }),
+  bumpConversationsVersion: () =>
+    set((state) => ({ conversationsVersion: state.conversationsVersion + 1 })),
   newChat: () =>
     set({ messages: [], currentConversationId: null }),
 }));
