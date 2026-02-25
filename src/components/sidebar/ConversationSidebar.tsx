@@ -187,15 +187,19 @@ export function ConversationSidebar() {
                       <MessageSquare className="w-4 h-4 shrink-0 opacity-60" />
                       {/* Title shrinks to make room; delete button is always in the layout */}
                       <div className="flex-1 min-w-0">
-                        <p className="truncate text-sm pr-1" title={conv.title}>{conv.title}</p>
+                        <p className="text-sm" title={conv.title}>
+                          {conv.title.length > 22 ? conv.title.slice(0, 22) + '…' : conv.title}
+                        </p>
                         <p className="text-xs opacity-50 mt-0.5">
                           {formatDistanceToNow(new Date(conv.updated_at), { addSuffix: true })}
                         </p>
                       </div>
                       <button
                         onClick={(e) => confirmDelete(e, conv.id)}
-                        className="shrink-0 p-1 rounded hover:text-red-400 hover:bg-red-500/10 transition-all"
-                        style={{ color: 'rgb(148 163 184)' }}
+                        className="shrink-0 p-1 rounded transition-all"
+                        style={{ color: 'rgba(255,255,255,0.45)' }}
+                        onMouseEnter={(e) => (e.currentTarget.style.color = '#f87171')}
+                        onMouseLeave={(e) => (e.currentTarget.style.color = 'rgba(255,255,255,0.45)')}
                       >
                         <Trash2 className="w-3.5 h-3.5" />
                       </button>
