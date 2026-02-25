@@ -17,6 +17,7 @@ export const metadata: Metadata = {
   title: "GrundMatch - AI Pump Advisor",
   description:
     "Find the right-sized Grundfos pump, prove the savings, and generate ROI business cases with AI.",
+  icons: { icon: "/gm_logo.png", apple: "/gm_logo.png" },
 };
 
 export default function RootLayout({

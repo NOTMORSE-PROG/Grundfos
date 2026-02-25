@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo } from "react";
-import { Droplets, User } from "lucide-react";
+import { User, Droplets } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Message } from "@/lib/chat-store";
@@ -9,6 +9,7 @@ import { parseMessageMetadata } from "@/lib/parse-message-metadata";
 import { SuggestionChips } from "./SuggestionChips";
 import { RequirementsSummary } from "./RequirementsSummary";
 import { PumpRecommendationCard } from "./PumpRecommendationCard";
+import { PumpComparisonCard } from "./PumpComparisonCard";
 
 interface MessageBubbleProps {
   message: Message;
@@ -40,6 +41,7 @@ export function MessageBubble({
   const pumps = message.metadata?.pumps as
     | Array<Record<string, unknown>>
     | undefined;
+  const isComparison = !!(message.metadata?.isComparison);
 
   const displayContent = isUser ? message.content : parsed.content;
 
@@ -86,7 +88,7 @@ export function MessageBubble({
       </div>
 
       <div className="flex-1 min-w-0">
-        <p className="text-xs font-semibold text-grundfos-blue mb-1">Dewey</p>
+        <p className="text-xs font-semibold text-grundfos-blue mb-1">GrundMatch</p>
 
         {isThinking && (
           <div className="inline-block rounded-2xl rounded-tl-sm px-4 py-3 bg-card border border-border">
@@ -112,7 +114,14 @@ export function MessageBubble({
           <RequirementsSummary requirements={requirements} />
         )}
 
-        {hasPumps &&
+        {hasPumps && isComparison && pumps.length >= 2 && (
+          <PumpComparisonCard
+            pump1={pumps[0] as never}
+            pump2={pumps[1] as never}
+          />
+        )}
+
+        {hasPumps && !isComparison &&
           pumps.map((pump, index) => (
             <PumpRecommendationCard
               key={(pump.id as string) || index}

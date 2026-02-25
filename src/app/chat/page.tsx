@@ -7,7 +7,8 @@ import { ChatMessages } from "@/components/chat/ChatMessages";
 import { ChatInput } from "@/components/chat/ChatInput";
 import { AuthModal } from "@/components/auth/AuthModal";
 import { Button } from "@/components/ui/button";
-import { Menu, Droplets, LogIn, LogOut } from "lucide-react";
+import { Menu, LogIn, LogOut, Home as HomeIcon, Droplets } from "lucide-react";
+import Link from "next/link";
 import { getUser, getSession, signOut } from "@/lib/auth";
 import type { User as SupabaseUser } from "@supabase/supabase-js";
 
@@ -28,6 +29,8 @@ export default function Home() {
   const handleSignOut = async () => {
     await signOut();
     setUser(null);
+    newChat();
+    bumpConversationsVersion();
   };
 
   const {
@@ -45,6 +48,7 @@ export default function Home() {
     setSidebarOpen,
     bumpConversationsVersion,
     addConversation,
+    newChat,
   } = useChatStore();
 
   const [pendingPrompt, setPendingPrompt] = useState<string>("");
@@ -87,7 +91,7 @@ export default function Home() {
       // and the next user message (e.g., "hmmm" → "Too expensive" chain).
       const lastAssistantMsg = [...messages].reverse().find((m) => m.role === "assistant");
       const lastEngineAction = lastAssistantMsg?.metadata?.engineAction as string | undefined;
-      const hadRecommendation = messages.some((m) => m.metadata?.engineAction === "recommend");
+      const hadRecommendation = messages.some((m) => m.metadata?.engineAction === "recommend" || m.metadata?.engineAction === "compare");
 
       try {
         const session = await getSession();
@@ -151,6 +155,7 @@ export default function Home() {
                   requirements: data.requirements,
                   pumps: data.pumps,
                   engineAction: data.engineAction,
+                  ...(data.isComparison && { isComparison: true }),
                 });
               } else if (data.type === "done") {
                 // Stream complete — reload sidebar so title is up to date
@@ -228,14 +233,15 @@ export default function Home() {
             <Menu className="h-5 w-5" />
           </Button>
 
+          <Link href="/">
+            <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-grundfos-blue">
+              <HomeIcon className="h-4 w-4" />
+            </Button>
+          </Link>
+
           <div className="flex items-center gap-2">
             <Droplets className="w-5 h-5 text-grundfos-blue" />
-            <div className="flex flex-col leading-tight">
-              <h1 className="font-semibold text-grundfos-dark text-sm">
-                Dewey
-              </h1>
-              <span className="text-[10px] text-muted-foreground">by GrundMatch</span>
-            </div>
+            <h1 className="font-semibold text-grundfos-dark text-sm">GrundMatch</h1>
           </div>
 
           <div className="flex items-center gap-2 ml-auto">

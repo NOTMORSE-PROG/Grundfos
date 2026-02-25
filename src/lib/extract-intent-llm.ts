@@ -32,8 +32,8 @@ Fields:
 - flow_m3h: number (flow rate in m³/h — ALWAYS convert to m³/h, see unit conversions below)
 - head_m: number (head pressure in meters — ALWAYS convert to meters)
 - motor_kw: number (motor/shaft power in kW — extract when only power is specified with no flow/head)
-- existingPumpBrand: string (brand of the pump they want to replace, e.g. "Wilo", "KSB", "DAB")
-- existingPump: string (full pump model name, e.g. "Stratos 25/14", "Multivert MVI 3-6/16")
+- existingPumpBrand: string (brand of the pump they want to replace, e.g. "Wilo", "KSB", "DAB") — ONLY set when the user EXPLICITLY states they HAVE an existing pump from another brand (e.g. "my old Wilo pump broke", "I want to replace my KSB"). Descriptions of the DESIRED pump type ("residential heating circulator", "industrial booster", "HVAC pump") do NOT indicate an existing pump — leave this unset.
+- existingPump: string (full pump model name, e.g. "Stratos 25/14", "Multivert MVI 3-6/16") — only set when the user explicitly names a specific pump model they currently have
 - problem: "low_pressure" | "no_water" | "replacement" | "new_install" | "energy_saving"
 
 Pump duty point format — CRITICAL: in pump specifications, "X m³/h, Y m" ALWAYS means flow=X and head=Y:

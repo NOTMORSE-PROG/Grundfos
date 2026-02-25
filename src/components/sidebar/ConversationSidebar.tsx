@@ -4,13 +4,7 @@ import { useEffect, useState } from "react";
 import { useChatStore } from "@/lib/chat-store";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import {
-  Plus,
-  MessageSquare,
-  Trash2,
-  Droplets,
-  X,
-} from "lucide-react";
+import { Plus, MessageSquare, Trash2, X, Droplets } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { getSession } from "@/lib/auth";
 

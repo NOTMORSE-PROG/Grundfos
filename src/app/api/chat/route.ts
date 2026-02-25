@@ -1,8 +1,8 @@
 import { NextRequest } from "next/server";
 import { getGroqClient } from "@/lib/groq";
-import { buildQuestionSystemPrompt, EXPLANATION_PROMPT, COMPARISON_PROMPT } from "@/lib/prompts";
+import { buildQuestionSystemPrompt, EXPLANATION_PROMPT, COMPARISON_PROMPT, PRODUCT_CONTRAST_PROMPT } from "@/lib/prompts";
 import { getServiceClient } from "@/lib/supabase";
-import { extractIntent, getNextAction, detectEvalDomain, type EngineResult, type RecommendedPump, type ConversationState } from "@/lib/recommendation-engine";
+import { extractIntent, getNextAction, detectEvalDomain, buildComparisonResult, type EngineResult, type RecommendedPump, type ConversationState } from "@/lib/recommendation-engine";
 import { parseMessageMetadata } from "@/lib/parse-message-metadata";
 import { extractIntentWithLLM, type LLMExtractedIntent } from "@/lib/extract-intent-llm";
 import { getLiveCarbonIntensity } from "@/lib/carbon-intensity";
@@ -147,15 +147,15 @@ export async function POST(request: NextRequest) {
     // Detect last engine action + whether any recommendation was ever shown.
     // For signed-in users: read from Supabase message metadata (full history scan).
     // For guests: read from client-provided values (sent from Zustand store).
-    let lastEngineAction: "recommend" | "ask" | "greet" | undefined;
+    let lastEngineAction: "recommend" | "ask" | "greet" | "compare" | undefined;
     let hadRecommendation = false;
     for (let i = historyMessages.length - 1; i >= 0; i--) {
       const m = historyMessages[i];
       if (m.role === "assistant" && m.metadata?.engineAction) {
         if (!lastEngineAction) {
-          lastEngineAction = m.metadata.engineAction as "recommend" | "ask" | "greet";
+          lastEngineAction = m.metadata.engineAction as "recommend" | "ask" | "greet" | "compare";
         }
-        if (m.metadata.engineAction === "recommend") {
+        if (m.metadata.engineAction === "recommend" || m.metadata.engineAction === "compare") {
           hadRecommendation = true;
           break;
         }
@@ -163,7 +163,7 @@ export async function POST(request: NextRequest) {
     }
     // Guest fallback: use client-provided values if Supabase didn't have them
     if (!lastEngineAction && clientLastEngineAction) {
-      lastEngineAction = clientLastEngineAction as "recommend" | "ask" | "greet";
+      lastEngineAction = clientLastEngineAction as "recommend" | "ask" | "greet" | "compare";
     }
     if (!hadRecommendation && clientHadRecommendation) {
       hadRecommendation = clientHadRecommendation;
@@ -221,7 +221,13 @@ export async function POST(request: NextRequest) {
       ...(llmIntent.flow_m3h != null && (!regexState.flow_m3h || latestHasFlow) && { flow_m3h: llmIntent.flow_m3h }),
       ...(llmIntent.head_m != null && (!regexState.head_m || latestHasHead) && { head_m: llmIntent.head_m }),
       ...(llmIntent.motor_kw != null && (!regexState.motor_kw || latestHasMotor) && { motor_kw: llmIntent.motor_kw }),
-      ...(llmIntent.existingPumpBrand && !regexState.existingPumpBrand && { existingPumpBrand: llmIntent.existingPumpBrand }),
+      // existingPumpBrand: only accept from LLM when regex also found none AND we don't
+      // already have an exact duty point. If the user gave both flow+head, they're describing
+      // what they WANT — e.g. "residential heating circulator, 2.5 m³/h 4m" — not asking for
+      // competitor replacement. The LLM misreads "circulator" as an existing pump brand.
+      ...(llmIntent.existingPumpBrand && !regexState.existingPumpBrand
+          && !(regexState.flow_m3h != null && regexState.head_m != null)
+          && { existingPumpBrand: llmIntent.existingPumpBrand }),
       ...(llmIntent.existingPump && !regexState.existingPump && { existingPump: llmIntent.existingPump }),
       ...(llmIntent.problem && !regexState.problem && { problem: llmIntent.problem }),
     };
@@ -255,6 +261,63 @@ export async function POST(request: NextRequest) {
         suggestions: ["Adjust my specs", "Different application", "Talk to an engineer"],
         state,
       };
+    }
+
+    // ─── Resolve comparison pumps ─────────────────────────────────
+    // When the engine returns action:"compare", we need to identify the two pump models
+    // and build their RecommendedPump data (specs + ROI). If the user named both pumps
+    // explicitly those names come back in comparePumps. If they said "compare those two"
+    // or similar, we look at the last recommendation in history.
+    if (engineResult.action === "compare") {
+      let pumpNames: [string, string] | null = engineResult.comparePumps ?? null;
+
+      if (!pumpNames) {
+        // Try to find the last turn where pumps were shown (Supabase history)
+        const lastRecMsg = [...historyMessages]
+          .reverse()
+          .find(
+            (m) =>
+              m.role === "assistant" &&
+              Array.isArray((m.metadata as Record<string, unknown>)?.pumps) &&
+              ((m.metadata as Record<string, unknown>).pumps as unknown[]).length >= 2
+          );
+        if (lastRecMsg) {
+          const hp = (lastRecMsg.metadata as Record<string, unknown>).pumps as Array<{ model: string }>;
+          pumpNames = [hp[0].model, hp[1].model];
+        } else {
+          // Guest fallback: try clientHistory
+          const lastClientRec = [...(clientHistory || [])]
+            .reverse()
+            .find((m) => m.role === "assistant" && (m as Record<string, unknown>).pumps);
+          if (lastClientRec && Array.isArray((lastClientRec as Record<string, unknown>).pumps)) {
+            const cp = (lastClientRec as Record<string, unknown>).pumps as Array<{ model: string }>;
+            if (cp.length >= 2) pumpNames = [cp[0].model, cp[1].model];
+          }
+        }
+      }
+
+      if (pumpNames) {
+        const compResult = buildComparisonResult(pumpNames[0], pumpNames[1], state, { co2Override: gridData.co2 });
+        if (compResult) {
+          engineResult = { ...engineResult, pumps: compResult };
+        } else {
+          // Pump model not found — fall back to ask
+          engineResult = {
+            action: "ask",
+            questionContext: `The user wants to compare specific pumps but the models weren't recognised. Ask them to confirm which two Grundfos pumps they'd like to compare — or offer to show the top recommendation first.`,
+            suggestions: ["Show me the top recommendation", "Compare MAGNA3 vs MAGNA1", "Compare ALPHA2 vs ALPHA1"],
+            state,
+          };
+        }
+      } else {
+        // No pumps found in history either — ask
+        engineResult = {
+          action: "ask",
+          questionContext: "The user wants to compare pumps but no models have been shown yet. Offer to find the best match first, then compare the top options.",
+          suggestions: ["Find the best pump for me", "I have specific models in mind"],
+          state,
+        };
+      }
     }
 
     // ─── Build LLM messages based on engine decision ──────────────
@@ -352,9 +415,14 @@ export async function POST(request: NextRequest) {
         aiSuggestions = engineResult.suggestions;
       }
     } else {
-      // Recommendation mode: choose prompt based on whether it's competitor replacement
+      // Recommendation / comparison mode: choose prompt based on mode
       const isCompetitor = engineResult.isCompetitorReplacement;
-      const basePrompt = isCompetitor ? COMPARISON_PROMPT : EXPLANATION_PROMPT;
+      const isProductComparison = engineResult.action === "compare";
+      const basePrompt = isProductComparison
+        ? PRODUCT_CONTRAST_PROMPT
+        : isCompetitor
+          ? COMPARISON_PROMPT
+          : EXPLANATION_PROMPT;
 
       const topPump = engineResult.pumps?.[0];
       const savings = topPump
@@ -397,9 +465,23 @@ export async function POST(request: NextRequest) {
         ? "\nNote: this has been a long conversation — be concise and reference the established facts above, not generic pump theory."
         : "";
 
+      const pump2 = engineResult.pumps?.[1];
+      const pump2Name = pump2?.model || "";
+      const pump2Savings = pump2 ? `₱${Math.round(pump2.roi.annual_savings).toLocaleString()}/year` : "";
+
       chatMessages.push({
         role: "system",
-        content: `${basePrompt}
+        content: isProductComparison
+          ? `${basePrompt}
+${specsAreUserProvided
+  ? `User's actual duty point: ${state.flow_m3h} m³/h at ${state.head_m} m head — use this to determine which pump is the better fit.`
+  : `IMPORTANT: The user asked for a direct model comparison. Do NOT assume or reference any building type, application, or use case — you don't know it. Focus only on the objective spec differences between the two models.`}
+
+PUMP NAMES — copy EXACTLY:
+  • Pump A: ${topPumpName}${topPump?.specs?.max_flow_m3h ? ` (max flow: ${topPump.specs.max_flow_m3h} m³/h, max head: ${topPump.specs.max_head_m} m, power: ${topPump.specs.power_kw} kW)` : ""}${topPump?.roi ? `, saves ${savings}/year` : ""}
+  • Pump B: ${pump2Name}${pump2?.specs?.max_flow_m3h ? ` (max flow: ${pump2.specs.max_flow_m3h} m³/h, max head: ${pump2.specs.max_head_m} m, power: ${pump2.specs.power_kw} kW)` : ""}${pump2?.roi ? `, saves ${pump2Savings}/year` : ""}
+Specs cards are shown below. Write 2-3 sentences on the KEY spec difference.${specsAreUserProvided ? " Give a verdict on which better fits the duty point above." : " State the difference objectively (flow range, power, etc.) and let the user decide which matters for their needs."}${longConvoHint}`
+          : `${basePrompt}
 
 User's system: ${app}${buildingLine ? ` — ${buildingLine}` : ""}.
 ${dutyLine}
@@ -440,9 +522,9 @@ FIRST-SENTENCE RULE: Your opening words must introduce ${topPumpName} directly �
       chatMessages.push({ role: "user", content: message });
     }
 
-    // ─── For recommend: build streamed LLM call ───────────────────
+    // ─── For recommend / compare: build streamed LLM call ────────
     let chatStream: AsyncIterable<{ choices: Array<{ delta?: { content?: string | null } }> }> | null = null;
-    if (engineResult.action === "recommend" && chatMessages.length > 0) {
+    if ((engineResult.action === "recommend" || engineResult.action === "compare") && chatMessages.length > 0) {
       try {
         chatStream = await callWithRetry(
           () => groq.chat.completions.create({
@@ -487,10 +569,13 @@ FIRST-SENTENCE RULE: Your opening words must introduce ${topPumpName} directly �
                 );
               }
             }
-          } else if (engineResult.action === "recommend") {
-            // Recommendation stream failed — use a clear fallback
+          } else if (engineResult.action === "recommend" || engineResult.action === "compare") {
+            // Stream failed — use a clear fallback
             const topName = engineResult.pumps?.[0]?.model || "a matching pump";
-            const fallbackText = `Great news! Based on your requirements, ${topName} is the best fit. Check the details in the card below for full specs and savings.`;
+            const pump2Name = engineResult.pumps?.[1]?.model;
+            const fallbackText = engineResult.action === "compare" && pump2Name
+              ? `Here's a side-by-side comparison of ${topName} and ${pump2Name}. Check the cards below for full specs and savings.`
+              : `Great news! Based on your requirements, ${topName} is the best fit. Check the details in the card below for full specs and savings.`;
             fullResponse = fallbackText;
             controller.enqueue(
               encoder.encode(
@@ -533,6 +618,8 @@ FIRST-SENTENCE RULE: Your opening words must introduce ${topPumpName} directly �
                   requirements: engineResult.requirements,
                   // Persist pump cards so signed-in users see them after page reload
                   pumps: engineResult.pumps ?? [],
+                  // Flag for comparison view rendering
+                  ...(engineResult.action === "compare" && { isComparison: true }),
                 },
               });
               if (assistantInsertErr) {
@@ -580,6 +667,11 @@ FIRST-SENTENCE RULE: Your opening words must introduce ${topPumpName} directly �
 
           // Always send engineAction so client can track post-recommendation state (for guests)
           metadata.engineAction = engineResult.action;
+
+          // Comparison flag — tells the frontend to render side-by-side comparison view
+          if (engineResult.action === "compare") {
+            metadata.isComparison = true;
+          }
 
           // Live grid data — always included so the frontend can show the CO2/rate badge
           metadata.gridData = {

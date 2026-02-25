@@ -57,7 +57,7 @@ export interface RecommendedPump extends CatalogPump {
 }
 
 export interface EngineResult {
-  action: "ask" | "recommend" | "greet";
+  action: "ask" | "recommend" | "greet" | "compare";
   questionContext?: string;
   suggestions?: string[];
   dutyPoint?: DutyPoint;
@@ -65,6 +65,8 @@ export interface EngineResult {
   requirements?: Array<{ label: string; value: string }>;
   state?: ConversationState;
   isCompetitorReplacement?: boolean;
+  /** null = use the last shown pumps from conversation context (resolved by route.ts) */
+  comparePumps?: [string, string] | null;
 }
 
 // ─── Safe number parsing (handles HYDRO-MPC-E string specs) ────────
@@ -612,11 +614,30 @@ const SIZE_TO_UNITS: Record<BuildingSize, number> = { small: 4, medium: 30, larg
 export function getNextAction(
   state: ConversationState,
   latestMessage?: string,
-  lastEngineAction?: "recommend" | "ask" | "greet",
+  lastEngineAction?: "recommend" | "ask" | "greet" | "compare",
   energyOptions?: { co2Override?: number },
   hadRecommendation?: boolean,
   conversationTurns = 0
 ): EngineResult {
+  // ─── Comparison intent — fires before all other checks ───────────────────
+  // "compare X to Y", "X vs Y", "which is better", etc. — always returns a compare
+  // action regardless of conversation state, even after a prior recommendation.
+  if (latestMessage) {
+    const isComparisonRequest = /\b(compare|vs\.?|versus|which\s+is\s+(better|best)|difference\s+between|better\s+(option|pump|between|choice)|side[\s-]?by[\s-]?side|compare\s+(these|those|the\s+two|them))\b/i.test(latestMessage);
+    if (isComparisonRequest) {
+      const typedCatalog = pumpCatalog.pumps as unknown as CatalogPump[];
+      const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const mentioned = typedCatalog
+        .filter((p) => new RegExp(escapeRe(p.model), "i").test(latestMessage!))
+        .map((p) => p.model);
+      if (mentioned.length >= 2) {
+        return { action: "compare", comparePumps: [mentioned[0], mentioned[1]] as [string, string], state };
+      }
+      // Less than 2 names found — signal route.ts to use recently shown pumps from history
+      return { action: "compare", comparePumps: null, state };
+    }
+  }
+
   // ─── Post-recommendation feedback handling ─────────────────────
   // Guard fires when:
   //   (a) the immediately previous turn was a recommendation, OR
@@ -624,7 +645,7 @@ export function getNextAction(
   //       even if subsequent clarifying questions changed lastEngineAction to "ask".
   // This prevents the engine from re-running with stale old specs when the user
   // says "Too expensive" or "Show me alternatives" after a clarifying turn.
-  const inPostRecMode = !!latestMessage && (lastEngineAction === "recommend" || !!hadRecommendation);
+  const inPostRecMode = !!latestMessage && (lastEngineAction === "recommend" || lastEngineAction === "compare" || !!hadRecommendation);
 
   if (inPostRecMode) {
     const hasNewInfo =
@@ -701,7 +722,11 @@ export function getNextAction(
   }
 
   // ─── Competitor replacement flow ──────────────────────────────
-  if (state.existingPumpBrand) {
+  // Competitor replacement flow — but skip entirely when exact flow+head are known.
+  // When a user provides an exact duty point (e.g. "2.5 m³/h 4m"), they're specifying
+  // what they WANT, not what they have. Asking for their old pump brand in that case
+  // breaks the flow; just recommend based on the duty point directly.
+  if (state.existingPumpBrand && !(state.flow_m3h != null && state.head_m != null)) {
     if (state.existingPump) {
       // Model known → try to cross-reference
       const crossRef = findCompetitorMatch(state.existingPumpBrand, state.existingPump);
@@ -1610,4 +1635,57 @@ function buildRequirementsSummary(state: ConversationState, dutyPoint: DutyPoint
     requirements.push({ label: "Specs Source", value: "User-provided" });
   }
   return requirements;
+}
+
+// ─── Comparison: build two named pumps side-by-side with ROI ────────────────
+// Called by route.ts when the engine returns action:"compare".
+// Returns both RecommendedPump objects with ROI calculated against the
+// current duty point (user-provided) or a reasonable estimate per pump.
+export function buildComparisonResult(
+  pumpName1: string,
+  pumpName2: string,
+  state: ConversationState,
+  energyOptions?: { co2Override?: number }
+): [RecommendedPump, RecommendedPump] | null {
+  const typedCatalog = pumpCatalog.pumps as unknown as CatalogPump[];
+  const p1 = typedCatalog.find((p) => p.model === pumpName1);
+  const p2 = typedCatalog.find((p) => p.model === pumpName2);
+  if (!p1 || !p2) return null;
+
+  const application = state.application || "water_supply";
+  const buildingSize = state.buildingSize || "medium";
+  const region = DEFAULT_ENERGY_RATES.PH;
+  const co2 = energyOptions?.co2Override ?? region.co2;
+  const operatingHours = getOperatingHours(application, buildingSize);
+
+  const buildPump = (pump: CatalogPump): RecommendedPump => {
+    const newPower = safeNumber(pump.specs.power_kw) || 0.1;
+    const maxFlow = safeNumber(pump.specs.max_flow_m3h) || 1;
+    const maxHead = safeNumber(pump.specs.max_head_m) || 1;
+
+    // Use the known duty point when available; otherwise derive from pump's rated specs
+    const reqFlow = state.flow_m3h ?? maxFlow * 0.7;
+    const reqHead = state.head_m ?? maxHead * 0.7;
+
+    const pumpOversizeRatio = Math.max(maxFlow / reqFlow, maxHead / reqHead);
+    const oversizingFactor = OVERSIZING_FACTORS[application]?.[buildingSize] || 1.4;
+    const typicalOversizedPower = newPower * Math.min(oversizingFactor, pumpOversizeRatio);
+    const loadFraction = 1 / Math.max(pumpOversizeRatio, 1);
+    const efficientPower = newPower * Math.max(loadFraction, 0.3);
+    const pumpCostPhp = parsePrice(pump.price_range_usd) * USD_TO_PHP;
+
+    const roi = calcROISummary(
+      { power_kw: typicalOversizedPower, operating_hours: operatingHours, electricity_rate: region.rate, co2_factor: co2 },
+      { power_kw: efficientPower, operating_hours: operatingHours, electricity_rate: region.rate, co2_factor: co2 },
+      pumpCostPhp
+    );
+
+    return {
+      ...pump,
+      price_range_php: parsePricePhp(pump.price_range_usd),
+      roi,
+    };
+  };
+
+  return [buildPump(p1), buildPump(p2)];
 }
