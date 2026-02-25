@@ -4,7 +4,6 @@ import { useRef, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { ArrowUp, Square } from "lucide-react";
-import { ImageUpload } from "./ImageUpload";
 
 interface ChatInputProps {
   onSend: (message: string) => void;
@@ -12,11 +11,6 @@ interface ChatInputProps {
   onStop?: () => void;
   value: string;
   onValueChange: (v: string) => void;
-  onImageProcessed?: (result: {
-    imageUrl: string;
-    ocrText: string;
-    parsedInfo: Record<string, string | null>;
-  }) => void;
 }
 
 export function ChatInput({
@@ -25,7 +19,6 @@ export function ChatInput({
   onStop,
   value,
   onValueChange,
-  onImageProcessed,
 }: ChatInputProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -70,11 +63,6 @@ export function ChatInput({
     <div className="border-t border-border bg-background px-4 py-3">
       <div className="max-w-3xl mx-auto">
         <div className="relative flex items-end gap-2 bg-card border border-border rounded-2xl px-4 py-2 focus-within:border-grundfos-blue/50 focus-within:ring-1 focus-within:ring-grundfos-blue/20 transition-all">
-          <ImageUpload
-            onImageProcessed={(result) => onImageProcessed?.(result)}
-            disabled={isStreaming}
-          />
-
           <Textarea
             ref={textareaRef}
             value={value}

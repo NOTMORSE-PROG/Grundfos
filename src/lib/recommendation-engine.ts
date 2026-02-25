@@ -368,22 +368,28 @@ export function extractIntent(messages: Array<{ role: string; content: string }>
   }
 
   // Exact flow/head specs — LATEST MESSAGE WINS over older messages.
-  // findLatestMatchInMessages searches from most recent to oldest, so any mid-conversation
-  // spec correction automatically overrides earlier values — no special case needed.
+  // Pre-compute individual flow/head matches from the latest message BEFORE the duty-point
+  // fallback. This prevents "what if flow drops to 30 m³/h but head up to 12m?" from being
+  // overridden by a previous "40 m³/h at 9m" history duty-point: the latest-message specs
+  // (30, 12) don't form a duty-point pattern but MUST still take priority over history.
   const latestDutyMatch = latestText.match(DUTY_POINT_PATTERN);
-  const historyDutyMatch = !latestDutyMatch ? findLatestMatchInMessages(userTexts, DUTY_POINT_PATTERN) : null;
+  const latestFlowMatch = latestText.match(FLOW_PATTERN);
+  const latestHeadMatch = latestText.match(HEAD_PATTERN) || latestText.match(HEAD_PATTERN_LOOSE);
+  // Only fall back to history duty-point when the latest message has NO individual specs.
+  // If the latest message has either flow or head, use the individual extraction branch instead.
+  const historyDutyMatch = (!latestDutyMatch && !latestFlowMatch && !latestHeadMatch)
+    ? findLatestMatchInMessages(userTexts, DUTY_POINT_PATTERN)
+    : null;
   const dutyMatch = latestDutyMatch || historyDutyMatch;
   if (dutyMatch) {
     state.flow_m3h = parseFloat(dutyMatch[1]);
     state.head_m = parseFloat(dutyMatch[2]);
   } else {
-    // Flow: latest message first, then reverse-history search
-    const latestFlowMatch = latestText.match(FLOW_PATTERN);
+    // Flow: latest message first (already computed above), then reverse-history search
     const flowMatch = latestFlowMatch || findLatestMatchInMessages(userTexts, FLOW_PATTERN);
     if (flowMatch) state.flow_m3h = parseFloat(flowMatch[1]);
 
-    // Head: latest message first, then reverse-history search
-    const latestHeadMatch = latestText.match(HEAD_PATTERN) || latestText.match(HEAD_PATTERN_LOOSE);
+    // Head: latest message first (already computed above), then reverse-history search
     const historyHeadMatch = latestHeadMatch ? null : (
       findLatestMatchInMessages(userTexts, HEAD_PATTERN) ||
       findLatestMatchInMessages(userTexts, HEAD_PATTERN_LOOSE)
@@ -412,6 +418,24 @@ export function extractIntent(messages: Array<{ role: string; content: string }>
   if (hpMatch) state.motor_kw = Math.round(parseFloat(hpMatch[1]) * 0.7457 * 1000) / 1000;
   const motorKwMatch = findLatestMatchInMessages(userTexts, MOTOR_KW_PATTERN);
   if (motorKwMatch) state.motor_kw = parseFloat(motorKwMatch[1]);
+
+  // Motor-only mode: if the latest message specifies only motor power (no flow or head),
+  // clear any historically-inherited flow/head AND update motor_kw from the latest message.
+  // e.g. "Motor drive instead: 0.55 kW" follows a coolant duty (2.5/13) and a previous
+  // "10 hp" Turn 1 — without this, state keeps flow=2.5/head=13 and motor_kw=7.457 (from
+  // history), blocking the motor gate and giving wrong pump.
+  // MOTOR_KW_PATTERN requires "kW motor/power" qualifier so bare "0.55 kW" is missed —
+  // we re-extract from the latest message using a broader kW regex as a fallback.
+  const latestHasMotorSpec = /\b\d+(?:\.\d+)?\s*(?:kW|hp)\b/i.test(latestText);
+  if (latestHasMotorSpec && !latestFlowMatch && !latestHeadMatch && !latestDutyMatch) {
+    state.flow_m3h = undefined;
+    state.head_m = undefined;
+    // Re-extract motor_kw from latest message so stale history values are overridden
+    const latestHpSpec = latestText.match(HP_PATTERN);
+    const latestKwSpec = latestText.match(/\b(\d+(?:\.\d+)?)\s*kW\b/i);
+    if (latestHpSpec) state.motor_kw = Math.round(parseFloat(latestHpSpec[1]) * 0.7457 * 1000) / 1000;
+    else if (latestKwSpec) state.motor_kw = parseFloat(latestKwSpec[1]);
+  }
 
   // Floor count → infer building size (latest message wins — user may correct floor count)
   const floorsMatch = findLatestMatchInMessages(userTexts, FLOORS_PATTERN);
@@ -619,7 +643,7 @@ export function getNextAction(
     if (!hasNewInfo) {
       // Detect specific feedback type to give a more targeted response
       const wantsCheaper = /\b(too\s*expensive|cheaper|budget|lower\s*price|affordable|cost\s*less|price)\b/i.test(latestMessage!);
-      const wantsAlternatives = /\b(show\s*(?:me\s*)?(?:more|other|alternative|different|option)|other\s*choice|more\s*option|see\s*more|show\s*alternative)\b/i.test(latestMessage!);
+      const wantsAlternatives = /\b(show\s*(?:me\s*)?(?:more|other|alternative|different|option)|other\s*choice|more\s*option|see\s*more|show\s*alternative|any\s+(?:\w+\s+)?option|compact\s+option|smaller\s+(?:pump|option|model)|other\s+model)\b/i.test(latestMessage!);
       const wantsDifferentType = /\b(wrong\s*type|different\s*pump|simpler|smaller\s*pump|basic|less\s*complex)\b/i.test(latestMessage!);
       const wantsDifferentSpecs = /\b(different\s*(?:flow|head|pressure|spec)|adjust|change\s*(?:the\s*)?spec|not\s*the\s*right\s*size)\b/i.test(latestMessage!);
 

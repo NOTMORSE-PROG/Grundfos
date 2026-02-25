@@ -409,13 +409,32 @@ ${alternatePumps.length > 0 ? `  • Also visible as alternatives: ${alternatePu
 Best Match saves approximately ${savings} (${monthlySavings}) vs a typical oversized installation.${competitorContext}
 ${topPump?.oversizingNote || ""}${featuresHint}${evalDomainHint}
 Specs and ROI are in cards below — write a warm, specific 2-3 sentence explanation that references their actual situation (building type, problem, or specs). If key features are listed above, weave the most relevant one in naturally.
-CRITICAL: Your response MUST name ${topPumpName} as the primary recommendation. Do NOT name any alternative as the top pick. These model names are the ONLY valid ones — never invent, abbreviate, or substitute.${isReRecommend ? `\nUser just updated their requirements — start with a brief 1-sentence acknowledgment of what changed, then explain ${topPumpName}.` : ""}${longConvoHint}`,
+CRITICAL: Your response MUST name ${topPumpName} as the primary recommendation. Do NOT name any alternative as the top pick. These model names are the ONLY valid ones — never invent, abbreviate, or substitute.
+FIRST-SENTENCE RULE: Your opening words must introduce ${topPumpName} directly — e.g. "The ${topPumpName} is..." or "${topPumpName} is your best bet here". Even if a different pump was mentioned in an earlier message, THIS response is only about ${topPumpName}.${isReRecommend ? `\nSPECS UPDATED: Requirements may have changed since last turn. ${topPumpName} is the current best match. Do NOT continue naming any pump from previous messages as the top choice — start fresh with ${topPumpName}.` : ""}${longConvoHint}`,
       });
-      // Limit history to last 6 messages — enough conversational context without bleeding old pump names
+      // Build history for recommendation LLM call.
+      // Sanitize previous assistant messages by replacing catalog pump model names with a
+      // neutral placeholder — prevents the LLM from being anchored to a stale pump name
+      // when the engine's top pick changes (e.g. MAGNA3→MAGNA1 after a spec update).
+      // This is the root cause of "LLM text says MAGNA3 but card shows MAGNA1" mismatches.
+      const allCatalogNames = [
+        "MAGNA3 100-120 F", "MAGNA1 100-120 F", "UPS 40-50 FN 250", "TP 40-230/2",
+        "UPM3 AUTO 15-50 130", "UPS 15-40 130", "UP 15-29 SU", "UPM2 K 15-40 130",
+        "ALPHA2 32-80 180", "ALPHA1 32-80 180", "COMFORT 15-14 M",
+        "MG71C", "CR 5-5", "CM 25-4", "MTH 2-4/2",
+        "SP 2A-13", "SP 3A-3", "SP 5A-5", "SQ 2-130 N", "SQ 3-120 N", "SQE 2-130 N",
+      ];
+      const catalogNameRe = new RegExp(
+        allCatalogNames.map(n => n.replace(/[-\/().]/g, "\\$&")).join("|"),
+        "g"
+      );
       for (const msg of effectiveHistory.slice(-6)) {
+        const content = msg.role === "assistant"
+          ? msg.content.replace(catalogNameRe, "Grundfos pump")
+          : msg.content;
         chatMessages.push({
           role: msg.role as "user" | "assistant",
-          content: msg.content,
+          content,
         });
       }
       chatMessages.push({ role: "user", content: message });

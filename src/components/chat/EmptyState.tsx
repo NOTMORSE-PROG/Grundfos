@@ -1,6 +1,6 @@
 "use client";
 
-import { Droplets, Wrench, Ruler, Camera, Zap } from "lucide-react";
+import { Droplets, Wrench, Ruler, Zap } from "lucide-react";
 
 interface EmptyStateProps {
   onPromptClick: (prompt: string) => void;
@@ -16,11 +16,6 @@ const SUGGESTED_PROMPTS = [
     icon: Ruler,
     text: "I need a pump for 25 m\u00B3/h at 45m head",
     description: "Find the right pump for your specs",
-  },
-  {
-    icon: Camera,
-    text: "I have a photo of my pump nameplate",
-    description: "Upload and get an instant match",
   },
   {
     icon: Zap,

@@ -210,30 +210,6 @@ export default function Home() {
     setIsStreaming(false);
   };
 
-  const handleImageProcessed = (result: {
-    imageUrl: string;
-    ocrText: string;
-    parsedInfo: Record<string, string | null>;
-  }) => {
-    // Build a message with OCR results to send to the chat
-    const parts: string[] = ["I uploaded a pump nameplate photo."];
-
-    if (result.parsedInfo.brand) parts.push(`Brand: ${result.parsedInfo.brand}`);
-    if (result.parsedInfo.model) parts.push(`Model: ${result.parsedInfo.model}`);
-    if (result.parsedInfo.power) parts.push(`Power: ${result.parsedInfo.power}`);
-    if (result.parsedInfo.voltage) parts.push(`Voltage: ${result.parsedInfo.voltage}`);
-    if (result.parsedInfo.flow) parts.push(`Flow: ${result.parsedInfo.flow}`);
-    if (result.parsedInfo.head) parts.push(`Head: ${result.parsedInfo.head}`);
-
-    if (parts.length === 1) {
-      parts.push(`OCR extracted text: "${result.ocrText.slice(0, 300)}"`);
-    }
-
-    parts.push("Please identify this pump and recommend a Grundfos replacement with energy savings analysis.");
-
-    sendMessage(parts.join("\n"));
-  };
-
   return (
     <div className="flex h-screen overflow-hidden">
       {/* Sidebar */}
@@ -314,7 +290,6 @@ export default function Home() {
           onStop={handleStop}
           value={pendingPrompt}
           onValueChange={setPendingPrompt}
-          onImageProcessed={handleImageProcessed}
         />
       </main>
     </div>
