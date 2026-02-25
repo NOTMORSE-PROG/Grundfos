@@ -25,13 +25,11 @@ export function MessageBubble({
 }: MessageBubbleProps) {
   const isUser = message.role === "user";
 
-  // Client-side parsing: always parse content to strip markers + extract metadata
   const parsed = useMemo(() => {
     if (isUser) return { content: message.content };
     return parseMessageMetadata(message.content);
   }, [message.content, isUser]);
 
-  // Use metadata from backend if available, otherwise use client-side parsed
   const suggestions =
     (message.metadata?.suggestions as string[] | undefined) ??
     parsed.suggestions;
@@ -43,92 +41,91 @@ export function MessageBubble({
     | Array<Record<string, unknown>>
     | undefined;
 
-  // Use cleaned content (markers stripped)
   const displayContent = isUser ? message.content : parsed.content;
 
-  // If we have pump cards, strip the markdown recommendation blocks from text
   const textContent = useMemo(() => {
     if (!pumps || pumps.length === 0) return displayContent;
-    // Strip **Recommended: ...** blocks and the bullet points after them
     let cleaned = displayContent;
-    // Remove "**Recommended: Model**" headers and following bullet list
     cleaned = cleaned.replace(
       /\*\*Recommended:\s*[^*]+\*\*[\s\S]*?(?=\*\*Recommended:|\n\n[^-*]|$)/g,
       ""
     );
-    // Clean up excessive newlines
     cleaned = cleaned.replace(/\n{3,}/g, "\n\n").trim();
     return cleaned;
   }, [displayContent, pumps]);
 
-  // Only show suggestions on the last assistant message and not while streaming
   const showSuggestions =
     isLastMessage && !isStreaming && suggestions && suggestions.length > 0;
-  // pumps only exist in metadata once the SSE metadata event arrives (after stream ends),
-  // so no isStreaming guard needed — a currently-streaming message won't have pumps yet.
-  // Keeping !isStreaming here would incorrectly hide cards in ALL previous messages
-  // while a new response is being streamed.
   const hasPumps = pumps && pumps.length > 0;
 
-  return (
-    <div className={`flex gap-3 ${isUser ? "flex-row-reverse" : ""} mb-4`}>
-      <div
-        className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
-          isUser
-            ? "bg-grundfos-blue"
-            : "bg-grundfos-light border border-grundfos-blue/20"
-        }`}
-      >
-        {isUser ? (
+  // ── User message — right-aligned bubble ─────────────────────────────────
+  if (isUser) {
+    return (
+      <div className="flex gap-3 flex-row-reverse mb-6">
+        <div className="w-8 h-8 rounded-full bg-grundfos-blue flex items-center justify-center shrink-0">
           <User className="w-4 h-4 text-white" />
-        ) : (
-          <Droplets className="w-4 h-4 text-grundfos-blue" />
-        )}
+        </div>
+        <div className="max-w-[75%]">
+          <div className="inline-block rounded-2xl rounded-tr-sm px-4 py-2.5 text-sm bg-grundfos-blue text-white">
+            <p className="whitespace-pre-wrap text-left">{displayContent}</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Bot message — left-aligned with bubble + "Dewey" name ────────────────
+
+  // While streaming and no content yet → show thinking dots inside this bubble
+  const isThinking = isLastMessage && isStreaming && !textContent;
+
+  return (
+    <div className="flex gap-3 mb-6">
+      <div className="w-8 h-8 rounded-full bg-grundfos-light border border-grundfos-blue/20 flex items-center justify-center shrink-0">
+        <Droplets className="w-4 h-4 text-grundfos-blue" />
       </div>
 
-      <div
-        className={`max-w-[80%] ${isUser ? "text-right" : "text-left"}`}
-      >
-        {isUser ? (
-          <div className="inline-block rounded-2xl px-4 py-2.5 text-sm bg-grundfos-blue text-white rounded-tr-md">
-            <p className="whitespace-pre-wrap">{displayContent}</p>
+      <div className="flex-1 min-w-0">
+        <p className="text-xs font-semibold text-grundfos-blue mb-1">Dewey</p>
+
+        {isThinking && (
+          <div className="inline-block rounded-2xl rounded-tl-sm px-4 py-3 bg-card border border-border">
+            <div className="flex gap-1 items-center">
+              <span className="w-1.5 h-1.5 bg-grundfos-blue/60 rounded-full animate-bounce [animation-delay:0ms]" />
+              <span className="w-1.5 h-1.5 bg-grundfos-blue/60 rounded-full animate-bounce [animation-delay:120ms]" />
+              <span className="w-1.5 h-1.5 bg-grundfos-blue/60 rounded-full animate-bounce [animation-delay:240ms]" />
+            </div>
           </div>
-        ) : (
-          <>
-            {/* Text content bubble */}
-            {textContent && (
-              <div className="inline-block rounded-2xl px-4 py-2.5 text-sm bg-card border border-border rounded-tl-md">
-                <div className="prose prose-sm max-w-none prose-headings:text-grundfos-dark prose-strong:text-foreground prose-p:text-foreground/90 prose-p:my-2 prose-ul:my-2 prose-ol:my-2">
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                    {textContent}
-                  </ReactMarkdown>
-                </div>
-              </div>
-            )}
+        )}
 
-            {/* Requirements summary — BEFORE pump cards */}
-            {requirements && requirements.length > 0 && (
-              <RequirementsSummary requirements={requirements} />
-            )}
+        {textContent && (
+          <div className="inline-block rounded-2xl rounded-tl-sm px-4 py-2.5 text-sm bg-card border border-border">
+            <div className="prose prose-sm max-w-none prose-headings:text-grundfos-dark prose-strong:text-foreground prose-p:text-foreground/90 prose-p:my-1.5 prose-ul:my-1.5 prose-ol:my-1.5">
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                {textContent}
+              </ReactMarkdown>
+            </div>
+          </div>
+        )}
 
-            {/* Pump recommendation cards */}
-            {hasPumps &&
-              pumps.map((pump, index) => (
-                <PumpRecommendationCard
-                  key={(pump.id as string) || index}
-                  pump={pump as never}
-                  rank={index + 1}
-                />
-              ))}
+        {requirements && requirements.length > 0 && (
+          <RequirementsSummary requirements={requirements} />
+        )}
 
-            {/* Suggestion chips */}
-            {showSuggestions && onSuggestionClick && (
-              <SuggestionChips
-                suggestions={suggestions}
-                onSelect={onSuggestionClick}
-              />
-            )}
-          </>
+        {hasPumps &&
+          pumps.map((pump, index) => (
+            <PumpRecommendationCard
+              key={(pump.id as string) || index}
+              pump={pump as never}
+              rank={index + 1}
+            />
+          ))}
+
+        {showSuggestions && onSuggestionClick && (
+          <SuggestionChips
+            suggestions={suggestions}
+            onSelect={onSuggestionClick}
+          />
         )}
       </div>
     </div>

@@ -20,7 +20,9 @@ export function getServiceClient(): SupabaseClient | null {
   if (!url || !key) return null;
 
   if (!serviceInstance) {
-    serviceInstance = createClient(url, key);
+    serviceInstance = createClient(url, key, {
+      auth: { persistSession: false, autoRefreshToken: false },
+    });
   }
   return serviceInstance;
 }

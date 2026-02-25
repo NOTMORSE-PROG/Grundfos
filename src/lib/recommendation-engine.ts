@@ -217,13 +217,20 @@ export function detectEvalDomain(queryText: string): string | undefined {
   // More specific sub-domains checked FIRST before general domain catches
   if (/cbs-hvac|cbs\b.*hvac|commercial\s+building.*hvac/i.test(queryText)) return "CBS";
   if (/dbs-hotwater|dbs\b.*hot[\s-]?water/i.test(queryText)) return "DBS-HotWater";
-  // Informal hot-water patterns — e.g. "for hotwater instead", "hot water recirculation", "HWR"
-  // Must appear BEFORE "dbs-heating" so "hotwater" corrections take priority in the same message
+  // Informal hot-water patterns — must appear BEFORE "dbs-heating" so "hotwater" corrections
+  // take priority in the same message. Also catches natural-language HWR from real chat users.
   if (/\bfor\s+hot[\s-]?water\b|\bhotwater\b|\bhot[\s-]?water[\s-]?recirc|\bHWR\b/i.test(queryText)) return "DBS-HotWater";
+  if (/hot[\s-]?water\s+(?:recirculation|circul|pump|loop|system|supply)/i.test(queryText)) return "DBS-HotWater";
+  if (/domestic[\s-]?hot[\s-]?water\b/i.test(queryText)) return "DBS-HotWater";
   if (/dbs-heating|dbs\b.*heat/i.test(queryText)) return "DBS-Heating";
-  if (/wu-borehole|borehole\s+service/i.test(queryText)) return "WU-Borehole";
-  if (/wu-domestic|domestic\s+service/i.test(queryText)) return "WU-Domestic";
-  if (/wu-irrigation|irrigation\s+service/i.test(queryText)) return "WU-Irrigation";
+  // WU sub-domains — accept natural language ("borehole pump", "irrigation pump") in addition
+  // to eval-kit phrases ("wu-borehole service", "wu-irrigation service")
+  if (/wu-borehole|borehole[\s-]?service/i.test(queryText)) return "WU-Borehole";
+  if (/\bborehole\b|\bdeep[\s-]?well[\s-]?pump\b/i.test(queryText)) return "WU-Borehole";
+  if (/wu-domestic|domestic[\s-]?service/i.test(queryText)) return "WU-Domestic";
+  if (/wu-irrigation|irrigation[\s-]?service/i.test(queryText)) return "WU-Irrigation";
+  // Natural-language irrigation — matches "irrigation pump", "farm irrigation", "agricultural irrigation"
+  if (/\birrigation\b/i.test(queryText)) return "WU-Irrigation";
   if (/wu-boosting/i.test(queryText)) return "WU";
   // IN sub-domains — must check before generic "industry-" catch.
   // Patterns accept both "industry-" (hyphenated eval-kit prefix) and "industrial" (natural language).
@@ -237,6 +244,8 @@ export function detectEvalDomain(queryText: string): string | undefined {
   // Contextual inference — order matters: more specific first
   if (/motor[\s-]?drive/i.test(queryText)) return "IN-MotorDrive";
   if (/industrial[\s-]?coolant|process[\s-]?cool(?:ing)?|coolant[\s-]?pump/i.test(queryText)) return "IN-Coolant";
+  // Natural-language industrial — "industrial pump", "industrial setting/application/use"
+  if (/\bindustrial\s+(?:pump|application|setting|use|process|system|fluid)\b/i.test(queryText)) return "IN";
   // Commercial HVAC contextual — large-scale heating/cooling without explicit CBS keyword
   if (/commercial\s+(?:hvac|heating|cooling|building)|district\s+heating/i.test(queryText)) return "CBS";
   if (/water\s+utility/i.test(queryText)) return "WU";
@@ -1071,8 +1080,14 @@ function matchPumpsByDutyPoint(
   let effectiveDomain = evalDomain;
   if (!effectiveDomain) {
     if (application === "heating" || application === "cooling") {
-      if (requiredFlow < 6) effectiveDomain = "DBS-Heating";
-      else if (requiredFlow >= 15) effectiveDomain = "CBS";
+      if (requiredFlow < 6) {
+        // Within the small-flow heating range, use head depth to separate:
+        //   < 3 m head → Hot Water Recirculation (UP / UPS / COMFORT — low-resistance loops)
+        //   ≥ 3 m head → Space heating circulator  (ALPHA2 / UPM3 / UPM2 — higher-resistance loops)
+        effectiveDomain = requiredHead < 3 ? "DBS-HotWater" : "DBS-Heating";
+      } else if (requiredFlow >= 15) {
+        effectiveDomain = "CBS";
+      }
     }
     // Tiny domestic flow+head = hot water recirculation → DBS-HotWater (UP/UPS/COMFORT)
     if (application === "domestic_water" && requiredFlow < 3 && requiredHead < 5) {
@@ -1080,11 +1095,16 @@ function matchPumpsByDutyPoint(
     }
   }
 
+  // Normalize IN sub-domains to "IN" for DOMAIN_PREFERENCE lookup.
+  // detectEvalDomain returns "IN-Coolant", "IN-Process", "IN-Booster" to allow future
+  // sub-domain-specific prefs, but currently all map to the same "IN" preference set.
+  const prefDomain = effectiveDomain?.startsWith("IN-") ? "IN" : effectiveDomain;
+
   // Family preferences: merge application defaults with domain overrides
   const appPrefs = FAMILY_PREFERENCE[application] || {};
-  const domainPrefs = effectiveDomain ? (DOMAIN_PREFERENCE[effectiveDomain] || {}) : {};
+  const domainPrefs = prefDomain ? (DOMAIN_PREFERENCE[prefDomain] || {}) : {};
   // Domain prefs take priority when a domain is known (explicit or inferred)
-  const preferences = effectiveDomain
+  const preferences = prefDomain
     ? { ...appPrefs, ...domainPrefs }
     : appPrefs;
   // Water source bonus: if "well", boost borehole families

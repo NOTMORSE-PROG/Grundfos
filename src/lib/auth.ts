@@ -1,12 +1,13 @@
 import { getSupabaseClient } from "./supabase";
 
-export async function signUpWithEmail(email: string, password: string) {
+export async function signUpWithEmail(email: string, password: string, name?: string) {
   const supabase = getSupabaseClient();
   if (!supabase) throw new Error("Auth not configured");
 
   const { data, error } = await supabase.auth.signUp({
     email,
     password,
+    options: name ? { data: { full_name: name } } : undefined,
   });
 
   if (error) throw error;
@@ -33,7 +34,7 @@ export async function signInWithGoogle() {
   const { data, error } = await supabase.auth.signInWithOAuth({
     provider: "google",
     options: {
-      redirectTo: `${window.location.origin}/`,
+      redirectTo: `${window.location.origin}/auth/callback`,
     },
   });
 

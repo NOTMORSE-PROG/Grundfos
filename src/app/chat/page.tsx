@@ -8,7 +8,7 @@ import { ChatInput } from "@/components/chat/ChatInput";
 import { AuthModal } from "@/components/auth/AuthModal";
 import { Button } from "@/components/ui/button";
 import { Menu, Droplets, LogIn, LogOut } from "lucide-react";
-import { getUser, signOut } from "@/lib/auth";
+import { getUser, getSession, signOut } from "@/lib/auth";
 import type { User as SupabaseUser } from "@supabase/supabase-js";
 
 export default function Home() {
@@ -22,6 +22,7 @@ export default function Home() {
   const handleAuthSuccess = async () => {
     const u = await getUser();
     setUser(u);
+    bumpConversationsVersion();
   };
 
   const handleSignOut = async () => {
@@ -42,6 +43,8 @@ export default function Home() {
     setIsStreaming,
     setCurrentConversationId,
     setSidebarOpen,
+    bumpConversationsVersion,
+    addConversation,
   } = useChatStore();
 
   const [pendingPrompt, setPendingPrompt] = useState<string>("");
@@ -87,9 +90,15 @@ export default function Home() {
       const hadRecommendation = messages.some((m) => m.metadata?.engineAction === "recommend");
 
       try {
+        const session = await getSession();
+        const fetchHeaders: Record<string, string> = { "Content-Type": "application/json" };
+        if (session?.access_token) {
+          fetchHeaders["Authorization"] = `Bearer ${session.access_token}`;
+        }
+
         const response = await fetch("/api/chat", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: fetchHeaders,
           body: JSON.stringify({
             message: content,
             conversationId: currentConversationId,
@@ -127,6 +136,11 @@ export default function Home() {
 
               if (data.type === "conversation_id") {
                 setCurrentConversationId(data.id);
+                // Optimistic insert — show conversation in sidebar immediately
+                // with placeholder title (like ChatGPT). Real title arrives after done.
+                if (!currentConversationId) {
+                  addConversation({ id: data.id, title: "New Chat", updated_at: new Date().toISOString() });
+                }
               } else if (data.type === "token") {
                 appendToLastMessage(data.content);
               } else if (data.type === "replace_content") {
@@ -139,7 +153,8 @@ export default function Home() {
                   engineAction: data.engineAction,
                 });
               } else if (data.type === "done") {
-                // Stream complete
+                // Stream complete — reload sidebar so title is up to date
+                bumpConversationsVersion();
               } else if (data.type === "error") {
                 appendToLastMessage(
                   "\n\n*Error: " + data.message + "*"
@@ -172,6 +187,8 @@ export default function Home() {
       updateLastMessageMetadata,
       setIsStreaming,
       setCurrentConversationId,
+      bumpConversationsVersion,
+      addConversation,
     ]
   );
 
@@ -237,9 +254,12 @@ export default function Home() {
 
           <div className="flex items-center gap-2">
             <Droplets className="w-5 h-5 text-grundfos-blue" />
-            <h1 className="font-semibold text-grundfos-dark text-sm">
-              GrundMatch
-            </h1>
+            <div className="flex flex-col leading-tight">
+              <h1 className="font-semibold text-grundfos-dark text-sm">
+                Dewey
+              </h1>
+              <span className="text-[10px] text-muted-foreground">by GrundMatch</span>
+            </div>
           </div>
 
           <div className="flex items-center gap-2 ml-auto">

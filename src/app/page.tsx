@@ -1,7 +1,3 @@
-"use client";
-
-import { useState } from "react";
-import { AuthModal } from "@/components/auth/AuthModal";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import {  } from "lucide-react";
@@ -21,34 +17,19 @@ import { Droplets,
   Settings, } from "lucide-react";
 
 export default function LandingPage() {
-  const [authModalOpen, setAuthModalOpen] = useState(false);
-
   return (
     <div className="min-h-screen bg-background">
-      <Navbar onSignInClick={() => setAuthModalOpen(true)} />
-      <HeroSection onSignUpClick={() => setAuthModalOpen(true)} />
+      <Navbar />
+      <HeroSection />
       <FeatureSection />
       <ProductSection />
       <ExcellenceSection />
       <Footer />
-
-      <AuthModal
-        open={authModalOpen}
-        onOpenChange={setAuthModalOpen}
-        onAuthSuccess={() => {
-          setAuthModalOpen(false);
-          window.location.href = "/chat";
-        }}
-      />
     </div>
   );
 }
 
-interface NavbarProps {
-  onSignInClick: () => void;
-}
-
-export function Navbar({ onSignInClick }: NavbarProps) {
+export function Navbar() {
   return (
     <nav className="flex items-center justify-between px-4 sm:px-6 md:px-12 py-6 bg-background border-b border-border">
       <div className="flex items-center gap-2">
@@ -62,30 +43,29 @@ export function Navbar({ onSignInClick }: NavbarProps) {
           variant="outline"
           size="sm"
           className="border-grundfos-blue/30 text-grundfos-blue hover:bg-grundfos-light"
-          onClick={onSignInClick}
+          asChild
         >
-          <LogIn className="h-4 w-4 sm:mr-1.5" />
-          <span className="hidden sm:inline">Sign In</span>
+          <Link href="/login">
+            <LogIn className="h-4 w-4 sm:mr-1.5" />
+            <span className="hidden sm:inline">Sign In</span>
+          </Link>
         </Button>
-        <Link href="/chat">
-          <Button
-            size="sm"
-            className="bg-grundfos-blue hover:bg-grundfos-dark text-white"
-          >
+        <Button
+          size="sm"
+          className="bg-grundfos-blue hover:bg-grundfos-dark text-white"
+          asChild
+        >
+          <Link href="/chat">
             <MessageSquare className="h-4 w-4 sm:mr-1.5" />
             <span className="hidden sm:inline">Try Now</span>
-          </Button>
-        </Link>
+          </Link>
+        </Button>
       </div>
     </nav>
   );
 }
 
-interface HeroSectionProps {
-  onSignUpClick: () => void;
-}
-
-export function HeroSection({ onSignUpClick }: HeroSectionProps) {
+export function HeroSection() {
   return (
     <section className="relative overflow-hidden text-white py-20 md:py-28">
       {/* Background Video */}
@@ -131,10 +111,12 @@ export function HeroSection({ onSignUpClick }: HeroSectionProps) {
             size="lg"
             variant="outline"
             className="bg-white/50 border-transparent text-white hover:bg-white/70 font-semibold px-8"
-            onClick={onSignUpClick}
+            asChild
           >
-            <LogIn className="h-5 w-5 mr-2" />
-            Sign Up / Log In
+            <Link href="/signup">
+              <LogIn className="h-5 w-5 mr-2" />
+              Sign Up / Log In
+            </Link>
           </Button>
         </div>
       </div>

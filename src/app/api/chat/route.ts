@@ -73,9 +73,18 @@ export async function POST(request: NextRequest) {
 
     const groq = getGroqClient();
 
+    // ─── Resolve user_id from auth token ─────────────────────────
+    const supabase = getServiceClient();
+    let userId: string | null = null;
+    const authHeader = request.headers.get("Authorization");
+    if (authHeader?.startsWith("Bearer ") && supabase) {
+      const token = authHeader.slice(7);
+      const { data: { user } } = await supabase.auth.getUser(token);
+      userId = user?.id ?? null;
+    }
+
     // ─── Load conversation history ────────────────────────────────
     let currentConversationId = conversationId;
-    const supabase = getServiceClient();
     const historyMessages: Array<{ role: string; content: string; metadata?: Record<string, unknown> }> = [];
 
     if (supabase) {
@@ -98,7 +107,7 @@ export async function POST(request: NextRequest) {
         } else {
           const { data: conv, error: convErr } = await supabase
             .from("conversations")
-            .insert({ session_id: sessionId, title: "New Chat" })
+            .insert({ session_id: sessionId, user_id: userId, title: "New Chat" })
             .select("id")
             .single();
           if (convErr) {
