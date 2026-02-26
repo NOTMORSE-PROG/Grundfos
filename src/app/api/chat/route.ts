@@ -361,10 +361,32 @@ export async function POST(request: NextRequest) {
     let aiSuggestions: string[] = [];
 
     if (engineResult.action === "ask" || engineResult.action === "greet") {
-      const questionContext = engineResult.questionContext ||
+      let questionContext = engineResult.questionContext ||
         (engineResult.action === "greet"
           ? "Greet the user and ask what pump problem they need help with."
           : "Ask the user for more information about their pump needs.");
+
+      // ─── Layperson context sanitization ───────────────────────────────────
+      // The engine's transparency gate injects raw duty-point numbers into questionContext
+      // (e.g. "estimated a duty point of 2.5 m³/h at 4.0 m head"). For laypersons this
+      // directly contradicts the expertise note ("never mention m³/h") — the LLM sees two
+      // conflicting rules and produces empty JSON, triggering the generic fallback.
+      // Fix: strip all technical numbers from questionContext before it reaches the LLM.
+      if (userExpertise === 'layperson') {
+        questionContext = questionContext
+          // Replace full duty-point phrase with plain equivalent
+          .replace(
+            /(?:estimated\s+a?\s*)?duty\s+point\s+of\s+[\d.]+\s*m[³3Â]?\/h\s*(?:flow\s+)?at\s+[\d.]+\s*m\s+head/gi,
+            'estimated the pump size requirements'
+          )
+          // Drop "do they have exact flow rate and head from a design document" clauses
+          .replace(/,?\s*or\s+do\s+they\s+have\s+exact\s+flow(?:\s+rate)?\s+and\s+head[^?.;]*/gi, '')
+          // Replace any remaining bare numeric specs
+          .replace(/\b[\d.]+\s*m[³3Â]?\/h\b/gi, 'the estimated flow')
+          .replace(/\b[\d.]+\s*m\s+head\b/gi, 'the required pressure')
+          // Replace "I have the exact flow & head specs" suggestion reference
+          .replace(/exact\s+flow\s+(?:rate\s+)?(?:&|and)\s+head\s+specs?/gi, 'exact specifications from a contractor');
+      }
 
       try {
         const qSystemPrompt = buildQuestionSystemPrompt(
@@ -372,8 +394,7 @@ export async function POST(request: NextRequest) {
           knownContextStr,
           doNotAskFields,
           conversationTurns,
-          userExpertise,
-          engineResult.suggestions?.length ? engineResult.suggestions : undefined
+          userExpertise
         );
 
         const qResponse = await callWithRetry(

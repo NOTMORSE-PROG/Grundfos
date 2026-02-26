@@ -52,8 +52,7 @@ export function buildQuestionSystemPrompt(
   knownContext: string,
   doNotAskFields: string[] = [],
   conversationTurns = 0,
-  expertise: 'technical' | 'layperson' = 'layperson',
-  forcedSuggestions?: string[]
+  expertise: 'technical' | 'layperson' = 'layperson'
 ): string {
   const doNotAskSection = doNotAskFields.length > 0
     ? `\nNEVER ask about these — already confirmed: ${doNotAskFields.join(", ")}.`
@@ -67,13 +66,7 @@ export function buildQuestionSystemPrompt(
     ? `\nUSER EXPERTISE: Non-technical user. NEVER ask for flow rate in m³/h, head pressure in meters, kW values, or any engineering units. Ask only practical questions: floors, rooms, building type, water source, what problem they have. Use everyday language — zero pump jargon in your question or suggestions.`
     : `\nUSER EXPERTISE: Technical user. You may use engineering terms (m³/h, m head, kW) naturally in your question when clarifying specs.`;
 
-  // When the engine pre-defines the exact chips, tell the LLM to use them verbatim
-  // and skip the brand-name ban (the engine intentionally includes brand names here).
-  const suggestionsRule = forcedSuggestions?.length
-    ? `CRITICAL: You MUST use exactly these suggestions, verbatim, in this exact order:
-${forcedSuggestions.map((s, i) => `  ${i + 1}. "${s}"`).join("\n")}
-Do NOT change, reorder, or replace them.`
-    : `- 3-4 short answer options (max 6 words each) that DIRECTLY answer the question you just asked.
+  const suggestionsRule = `- 3-4 short answer options (max 6 words each) that DIRECTLY answer the question you just asked.
 - If you ask about floors → suggestions must be floor ranges.
 - If you ask about the water problem → suggestions must be problem types.
 - If you ask what the pump is used for → suggestions must be pump use cases.
