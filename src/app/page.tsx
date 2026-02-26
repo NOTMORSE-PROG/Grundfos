@@ -1,11 +1,10 @@
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import {  } from "lucide-react";
-import { Droplets, 
-  MessageSquare, 
-  LogIn, 
-  Globe, 
-  Zap, 
+import { MessageSquare,
+  LogIn,
+  Globe,
+  Zap,
   Lightbulb,
   Waves,
   Flame,
@@ -33,10 +32,7 @@ export function Navbar() {
   return (
     <nav className="flex items-center justify-between px-4 sm:px-6 md:px-12 py-6 bg-background border-b border-border">
       <div className="flex items-center gap-2">
-        <Droplets className="w-6 h-6 text-grundfos-blue" />
-        <span className="font-bold text-xl text-grundfos-dark">
-          GrundMatch
-        </span>
+        <img src="/gm_logo.png" alt="GrundMatch" className="h-8 w-auto" />
       </div>
       <div className="flex items-center gap-2 sm:gap-3">
         <Button

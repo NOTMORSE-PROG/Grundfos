@@ -4,7 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
-import { Eye, EyeOff, Loader2, ArrowLeft, Droplets } from "lucide-react";
+import { Eye, EyeOff, Loader2, ArrowLeft } from "lucide-react";
 import { signInWithEmail, signInWithGoogle } from "@/lib/auth";
 
 export default function LoginPage() {
@@ -55,9 +55,7 @@ export default function LoginPage() {
         </button>
 
         <div className="flex flex-col items-center text-center space-y-1">
-          <div className="w-12 h-12 rounded-xl bg-grundfos-blue flex items-center justify-center mb-2">
-            <Droplets className="w-7 h-7 text-white" />
-          </div>
+          <img src="/gm_logo.png" alt="GrundMatch" className="h-12 w-auto mb-2" />
           <h1 className="text-xl font-semibold text-gray-900">Welcome back to GrundMatch</h1>
           <p className="text-sm text-gray-500">Sign in to your GrundMatch account</p>
         </div>
