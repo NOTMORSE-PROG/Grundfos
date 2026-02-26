@@ -8,7 +8,6 @@ import {
   Zap,
   Gauge,
   Activity,
-  DollarSign,
   Leaf,
   CheckCircle2,
   ExternalLink,
@@ -19,13 +18,6 @@ import {
   Droplets,
 } from "lucide-react";
 import { PdfProductImage } from "@/components/chat/PdfProductImage";
-
-interface ROISummary {
-  annual_savings: number;
-  co2_reduction_tonnes: number;
-  ten_year_savings: number;
-  payback_months: number;
-}
 
 interface ComparedPump {
   id: string;
@@ -40,7 +32,7 @@ interface ComparedPump {
   specs: Record<string, unknown>;
   price_range_usd: string;
   price_range_php?: string;
-  roi?: ROISummary;
+  roi?: { annual_savings: number; co2_reduction_tonnes: number; ten_year_savings: number; payback_months: number };
 }
 
 interface PumpComparisonCardProps {
@@ -48,28 +40,15 @@ interface PumpComparisonCardProps {
   pump2: ComparedPump;
 }
 
-function formatCurrency(value: number): string {
-  return `₱${Math.round(value).toLocaleString()}`;
-}
-
-function parsePrice(priceRange: string): number {
-  const parts = priceRange.replace(/[,$]/g, "").split("-").map(Number);
-  if (parts.length === 2) return (parts[0] + parts[1]) / 2;
-  return parts[0] || 500;
-}
-
-// Returns "a" | "b" | "tie" for a given numeric metric (higher = better unless lowerBetter)
-function winner(a: number | null, b: number | null, lowerBetter = false): "a" | "b" | "tie" {
+// Returns "a" | "b" | "tie" for a given numeric metric (higher = better)
+function winner(a: number | null, b: number | null): "a" | "b" | "tie" {
   if (a === null || b === null) return "tie";
   if (Math.abs(a - b) < 0.001) return "tie";
-  const aWins = lowerBetter ? a < b : a > b;
-  return aWins ? "a" : "b";
+  return a > b ? "a" : "b";
 }
 
 function WinBadge({ side, which }: { side: "a" | "b"; which: "a" | "b" | "tie" }) {
-  if (which === "tie") return null;
-  const isWinner = side === which;
-  if (!isWinner) return null;
+  if (which === "tie" || side !== which) return null;
   return (
     <span className="inline-flex items-center gap-0.5 text-[9px] font-bold text-green-600 bg-green-100 dark:bg-green-900/40 dark:text-green-400 px-1.5 py-0.5 rounded-full ml-1">
       <CheckCircle2 className="w-2.5 h-2.5" />
@@ -81,14 +60,13 @@ function WinBadge({ side, which }: { side: "a" | "b"; which: "a" | "b" | "tie" }
 interface PumpColumnProps {
   pump: ComparedPump;
   side: "a" | "b";
-  wins: { flow: "a" | "b" | "tie"; head: "a" | "b" | "tie"; savings: "a" | "b" | "tie"; price: "a" | "b" | "tie" };
+  wins: { flow: "a" | "b" | "tie"; head: "a" | "b" | "tie" };
   isPrimary: boolean;
 }
 
 function PumpColumn({ pump, side, wins, isPrimary }: PumpColumnProps) {
   const [datasheetOpen, setDatasheetOpen] = useState(false);
   const specs = pump.specs;
-  const roi = pump.roi;
 
   return (
     <>
@@ -174,36 +152,6 @@ function PumpColumn({ pump, side, wins, isPrimary }: PumpColumnProps) {
                 <span className="text-xs font-semibold text-green-600">{String(specs.energy_class)}</span>
               </div>
             )}
-
-            {/* Price */}
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
-                <DollarSign className="w-3 h-3" />
-                <span>Price</span>
-              </div>
-              <div className="flex items-center">
-                <span className="text-xs font-semibold text-right">
-                  {pump.price_range_php || `$${pump.price_range_usd}`}
-                </span>
-                <WinBadge side={side} which={wins.price} />
-              </div>
-            </div>
-
-            {/* Savings */}
-            {roi && (
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
-                  <DollarSign className="w-3 h-3 text-green-600" />
-                  <span>Annual Savings</span>
-                </div>
-                <div className="flex items-center">
-                  <span className="text-xs font-semibold text-green-600">
-                    {formatCurrency(roi.annual_savings)}/yr
-                  </span>
-                  <WinBadge side={side} which={wins.savings} />
-                </div>
-              </div>
-            )}
           </div>
 
           {/* Key features — top 2 only for space */}
@@ -285,17 +233,16 @@ export function PumpComparisonCard({ pump1, pump2 }: PumpComparisonCardProps) {
   const flow2 = (pump2.specs.max_flow_m3h as number) ?? null;
   const head1 = (pump1.specs.max_head_m as number) ?? null;
   const head2 = (pump2.specs.max_head_m as number) ?? null;
-  const savings1 = pump1.roi?.annual_savings ?? null;
-  const savings2 = pump2.roi?.annual_savings ?? null;
-  const price1 = parsePrice(pump1.price_range_usd);
-  const price2 = parsePrice(pump2.price_range_usd);
 
   const wins = {
     flow: winner(flow1, flow2),
     head: winner(head1, head2),
-    savings: winner(savings1, savings2),
-    price: winner(price1, price2, true), // lower price = better
   };
+
+  // Highlight whoever wins more hydraulic categories
+  const winsA = Object.values(wins).filter((w) => w === "a").length;
+  const winsB = Object.values(wins).filter((w) => w === "b").length;
+  const highlightSide: "a" | "b" | "tie" = winsA > winsB ? "a" : winsB > winsA ? "b" : "tie";
 
   return (
     <div className="my-2">
@@ -317,8 +264,8 @@ export function PumpComparisonCard({ pump1, pump2 }: PumpComparisonCardProps) {
       {/* Two-column layout */}
       {expanded && (
         <div className="flex flex-col sm:flex-row gap-2">
-          <PumpColumn pump={pump1} side="a" wins={wins} isPrimary={true} />
-          <PumpColumn pump={pump2} side="b" wins={wins} isPrimary={false} />
+          <PumpColumn pump={pump1} side="a" wins={wins} isPrimary={highlightSide === "a"} />
+          <PumpColumn pump={pump2} side="b" wins={wins} isPrimary={highlightSide === "b"} />
         </div>
       )}
 

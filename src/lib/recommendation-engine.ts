@@ -67,6 +67,8 @@ export interface EngineResult {
   isCompetitorReplacement?: boolean;
   /** null = use the last shown pumps from conversation context (resolved by route.ts) */
   comparePumps?: [string, string] | null;
+  /** true when the user asked "what is X" — LLM prompt switches to factual overview mode */
+  isPumpInfoRequest?: boolean;
 }
 
 // ─── Safe number parsing (handles HYDRO-MPC-E string specs) ────────
@@ -619,6 +621,46 @@ export function getNextAction(
   hadRecommendation?: boolean,
   conversationTurns = 0
 ): EngineResult {
+  // ─── Pump info lookup — "what is X", "tell me about X", "show me X specs" ─
+  // Fires before all other checks. When the user names a specific catalog model
+  // and uses an info-seeking phrase, return a single-pump "recommend" result
+  // flagged as isPumpInfoRequest so route.ts uses a factual (not sales) LLM prompt.
+  if (latestMessage) {
+    const isInfoRequest = /\b(what\s+is|what'?s\s+(?:the\s+)?|tell\s+me\s+about|about\s+the|info\s+(on|about)|show\s+me|specs?\s+(for|of)|describe|explain)\b/i.test(latestMessage);
+    if (isInfoRequest) {
+      const typedCatalog = pumpCatalog.pumps as unknown as CatalogPump[];
+      const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const found = typedCatalog.find((p) => new RegExp(escapeRe(p.model), "i").test(latestMessage!));
+      if (found) {
+        const region = DEFAULT_ENERGY_RATES.PH;
+        const co2 = energyOptions?.co2Override ?? region.co2;
+        const operatingHours = getOperatingHours("water_supply", "medium");
+        const newPower = safeNumber(found.specs.power_kw) || 0.1;
+        const maxFlow = safeNumber(found.specs.max_flow_m3h) || 1;
+        const maxHead = safeNumber(found.specs.max_head_m) || 1;
+        const reqFlow = maxFlow * 0.7;
+        const reqHead = maxHead * 0.7;
+        const pumpOversizeRatio = Math.max(maxFlow / reqFlow, maxHead / reqHead);
+        const typicalOversizedPower = newPower * Math.min(1.4, pumpOversizeRatio);
+        const efficientPower = newPower * Math.max(1 / Math.max(pumpOversizeRatio, 1), 0.3);
+        const pumpCostPhp = parsePrice(found.price_range_usd) * USD_TO_PHP;
+        const roi = calcROISummary(
+          { power_kw: typicalOversizedPower, operating_hours: operatingHours, electricity_rate: region.rate, co2_factor: co2 },
+          { power_kw: efficientPower, operating_hours: operatingHours, electricity_rate: region.rate, co2_factor: co2 },
+          pumpCostPhp
+        );
+        const infoPump: RecommendedPump = { ...found, price_range_php: parsePricePhp(found.price_range_usd), roi, matchConfidence: 100, matchLabel: "Exact model" };
+        return {
+          action: "recommend",
+          pumps: [infoPump],
+          isPumpInfoRequest: true,
+          suggestions: [`Compare ${found.model} with another pump`, "Find a pump for my system", "Show alternatives"],
+          state,
+        };
+      }
+    }
+  }
+
   // ─── Comparison intent — fires before all other checks ───────────────────
   // "compare X to Y", "X vs Y", "which is better", etc. — always returns a compare
   // action regardless of conversation state, even after a prior recommendation.

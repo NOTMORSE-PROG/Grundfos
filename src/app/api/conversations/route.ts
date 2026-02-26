@@ -41,13 +41,12 @@ export async function GET(request: NextRequest) {
       .order("updated_at", { ascending: false })
       .range(offset, offset + limit - 1);
 
-    // Signed-in users: load all their conversations across devices
-    // Guests: load only conversations from this browser session
-    if (userId) {
-      query = query.eq("user_id", userId);
-    } else {
-      query = query.eq("session_id", sessionId);
+    // Only signed-in users have saved conversations
+    if (!userId) {
+      return NextResponse.json({ conversations: [] });
     }
+
+    query = query.eq("user_id", userId);
 
     const { data: conversations, error } = await query;
 

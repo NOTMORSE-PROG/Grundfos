@@ -87,7 +87,8 @@ export async function POST(request: NextRequest) {
     let currentConversationId = conversationId;
     const historyMessages: Array<{ role: string; content: string; metadata?: Record<string, unknown> }> = [];
 
-    if (supabase) {
+    // Only persist conversations/messages for signed-in users
+    if (supabase && userId) {
       try {
         if (currentConversationId) {
           const { data: history, error: histErr } = await supabase
@@ -418,6 +419,7 @@ export async function POST(request: NextRequest) {
       // Recommendation / comparison mode: choose prompt based on mode
       const isCompetitor = engineResult.isCompetitorReplacement;
       const isProductComparison = engineResult.action === "compare";
+      const isPumpInfo = engineResult.isPumpInfoRequest === true;
       const basePrompt = isProductComparison
         ? PRODUCT_CONTRAST_PROMPT
         : isCompetitor
@@ -471,7 +473,12 @@ export async function POST(request: NextRequest) {
 
       chatMessages.push({
         role: "system",
-        content: isProductComparison
+        content: isPumpInfo
+          ? `You are a Grundfos product expert. The user asked what the ${topPumpName} is.
+Give a factual 2-3 sentence overview: what category it belongs to (${topPump?.category || "pump"}), its typical application, and its standout feature or spec.
+Specs are shown in the card below — do NOT repeat them verbatim. Do NOT frame this as a recommendation or mention their system/building — they haven't told you anything about that yet.
+Start with "The ${topPumpName} is..." — use the model name exactly as written.`
+          : isProductComparison
           ? `${basePrompt}
 ${specsAreUserProvided
   ? `User's actual duty point: ${state.flow_m3h} m³/h at ${state.head_m} m head — use this to determine which pump is the better fit.`
@@ -605,8 +612,8 @@ FIRST-SENTENCE RULE: Your opening words must introduce ${topPumpName} directly �
             );
           }
 
-          // Save assistant response to Supabase
-          if (supabase && currentConversationId) {
+          // Save assistant response to Supabase (signed-in users only)
+          if (supabase && userId && currentConversationId) {
             try {
               const { error: assistantInsertErr } = await supabase.from("messages").insert({
                 conversation_id: currentConversationId,
