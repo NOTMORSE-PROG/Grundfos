@@ -1,11 +1,11 @@
 {
   "catalog_metadata": {
     "project": "GrundMatch - AI Pump Advisor for Grundfos",
-    "purpose": "Hackathon catalog — 21 PDF-verified eval pumps + chatbot UX pumps",
+    "purpose": "Hackathon catalog \u00e2\u20ac\u201d 21 PDF-verified eval pumps + chatbot UX pumps",
     "compiled_date": "2026-02-21",
     "domains": "CBS (Commercial HVAC), DBS (Domestic Residential), IN (Industry), WU (Water Utility)",
     "unit_conventions": {
-      "flow": "m³/h",
+      "flow": "m\u00c2\u00b3/h",
       "head": "m (meters)",
       "power": "kW"
     }
@@ -50,9 +50,7 @@
         "Grundfos GO Remote app compatible",
         "Flanged connection DN100"
       ],
-      "estimated_annual_kwh": 3500,
-      "price_range_eur": "2000-2800",
-      "price_range_usd": "2200-3000",
+      "price_range_usd": "6119",
       "competitor_equivalents": {
         "wilo": "Wilo Stratos MAXO 100/0.5-12",
         "ksb": "KSB Calio 100-120",
@@ -96,9 +94,7 @@
         "Grundfos GO Remote app compatible",
         "Flanged connection DN100"
       ],
-      "estimated_annual_kwh": 2800,
-      "price_range_eur": "1600-2200",
-      "price_range_usd": "1800-2400",
+      "price_range_usd": "6897",
       "competitor_equivalents": {
         "wilo": "Wilo Stratos MAXO 80/0.5-12",
         "ksb": "KSB Calio 80-120",
@@ -139,9 +135,7 @@
         "Low noise level",
         "Compact design"
       ],
-      "estimated_annual_kwh": 600,
-      "price_range_eur": "200-350",
-      "price_range_usd": "220-380",
+      "price_range_usd": "1356",
       "competitor_equivalents": {
         "wilo": "Wilo Star-RS 25/6",
         "ksb": "KSB Rio-Eco N 25-60",
@@ -183,9 +177,7 @@
         "Wide temperature range",
         "Cast iron construction"
       ],
-      "estimated_annual_kwh": 1800,
-      "price_range_eur": "600-900",
-      "price_range_usd": "650-1000",
+      "price_range_usd": "4164",
       "competitor_equivalents": {
         "wilo": "Wilo IL-E 40/210-11/2",
         "ksb": "KSB Etaline 40-200",
@@ -229,9 +221,7 @@
         "LED status indicator",
         "Quiet operation"
       ],
-      "estimated_annual_kwh": 80,
-      "price_range_eur": "150-230",
-      "price_range_usd": "165-255",
+      "price_range_usd": "248",
       "competitor_equivalents": {
         "wilo": "Wilo Yonos PICO 25/1-6",
         "ksb": "KSB Calio S 15-50",
@@ -272,9 +262,7 @@
         "Low noise level",
         "Corrosion-resistant materials"
       ],
-      "estimated_annual_kwh": 150,
-      "price_range_eur": "80-140",
-      "price_range_usd": "90-160",
+      "price_range_usd": "360",
       "competitor_equivalents": {
         "wilo": "Wilo Star-RS 15/4",
         "ksb": "KSB Rio-Eco N 15-40",
@@ -313,11 +301,9 @@
         "Low-head domestic HWR specialist",
         "Energy-efficient operation",
         "Compact and silent",
-        "Max head 2.9m — ideal for short recirculation loops"
+        "Max head 2.9m \u00e2\u20ac\u201d ideal for short recirculation loops"
       ],
-      "estimated_annual_kwh": 60,
-      "price_range_eur": "90-150",
-      "price_range_usd": "100-170",
+      "price_range_usd": "312",
       "competitor_equivalents": {
         "wilo": "Wilo Star-Z 15 TT",
         "ksb": "KSB Rio-Eco-Z",
@@ -356,9 +342,7 @@
         "Wide temperature range",
         "Simple installation"
       ],
-      "estimated_annual_kwh": 180,
-      "price_range_eur": "70-120",
-      "price_range_usd": "80-135",
+      "price_range_usd": "622",
       "competitor_equivalents": {
         "wilo": "Wilo Star-RS 15/4",
         "ksb": "KSB Rio-Eco N 15-40"
@@ -398,14 +382,12 @@
         "AUTOADAPT function",
         "Permanent magnet motor (ECM)",
         "Real-time power display (W)",
-        "Real-time flow display (m³/h)",
+        "Real-time flow display (m\u00c2\u00b3/h)",
         "Grundfos GO Remote app compatible",
         "ALPHA Reader for system balancing",
         "3 constant-pressure, 3 proportional-pressure, 3 fixed-speed modes"
       ],
-      "estimated_annual_kwh": 60,
-      "price_range_eur": "200-320",
-      "price_range_usd": "220-360",
+      "price_range_usd": "605",
       "competitor_equivalents": {
         "wilo": "Wilo Yonos PICO 25/1-6",
         "ksb": "KSB Calio S 32-80",
@@ -447,9 +429,7 @@
         "Compact design",
         "Low energy consumption"
       ],
-      "estimated_annual_kwh": 75,
-      "price_range_eur": "130-220",
-      "price_range_usd": "145-245",
+      "price_range_usd": "403",
       "competitor_equivalents": {
         "wilo": "Wilo Yonos PICO 25/1-6",
         "ksb": "KSB Calio S 25-60",
@@ -491,9 +471,7 @@
         "Silent operation",
         "No return valve required"
       ],
-      "estimated_annual_kwh": 25,
-      "price_range_eur": "200-320",
-      "price_range_usd": "220-360",
+      "price_range_usd": "330",
       "competitor_equivalents": {
         "wilo": "Wilo Star-Z TT",
         "ksb": "KSB Calio-Z 15/4-130"
@@ -532,9 +510,7 @@
         "3-phase induction motor",
         "Suitable for VFD control"
       ],
-      "estimated_annual_kwh": 1500,
-      "price_range_eur": "150-280",
-      "price_range_usd": "170-310",
+      "price_range_usd": "386",
       "competitor_equivalents": {
         "abb": "ABB M3AA 71",
         "siemens": "Siemens 1LA7 071",
@@ -577,9 +553,7 @@
         "Modular stage design for easy servicing",
         "Wide range of material options"
       ],
-      "estimated_annual_kwh": 800,
-      "price_range_eur": "500-800",
-      "price_range_usd": "550-900",
+      "price_range_usd": "1249",
       "competitor_equivalents": {
         "wilo": "Wilo Helix V 5-1/5",
         "ksb": "KSB Movitec V 5/5",
@@ -623,9 +597,7 @@
         "Compact horizontal layout",
         "Suitable for industrial processes"
       ],
-      "estimated_annual_kwh": 25000,
-      "price_range_eur": "2500-4000",
-      "price_range_usd": "2800-4400",
+      "price_range_usd": "4772",
       "competitor_equivalents": {
         "wilo": "Wilo MHI 803",
         "ksb": "KSB Movitec H 25/4",
@@ -666,9 +638,7 @@
         "Suitable for coolant circulation",
         "IEC motor interface"
       ],
-      "estimated_annual_kwh": 1500,
-      "price_range_eur": "400-700",
-      "price_range_usd": "450-800",
+      "price_range_usd": "763",
       "competitor_equivalents": {
         "wilo": "Wilo MHI 203",
         "ksb": "KSB Movitec H 2/4",
@@ -680,7 +650,7 @@
       "model": "SP 2A-13",
       "family": "SP",
       "category": "Submersible",
-      "type": "Submersible borehole pump — medium head irrigation",
+      "type": "Submersible borehole pump \u00e2\u20ac\u201d medium head irrigation",
       "image_url": "",
       "pdf_url": "/datasheets/WU_SP2_SAMPLE.pdf",
       "applications": [
@@ -708,11 +678,9 @@
         "Sand-resistant design",
         "Floating impellers for axial thrust compensation",
         "Water-lubricated journal bearings",
-        "13-stage design — best for 50-65m head"
+        "13-stage design \u00e2\u20ac\u201d best for 50-65m head"
       ],
-      "estimated_annual_kwh": 2000,
-      "price_range_eur": "500-800",
-      "price_range_usd": "550-900",
+      "price_range_usd": "1168",
       "competitor_equivalents": {
         "wilo": "Wilo Sub TWU 4-0408",
         "ksb": "KSB UPA 100C 2A/13",
@@ -724,7 +692,7 @@
       "model": "SP 3A-3",
       "family": "SP",
       "category": "Submersible",
-      "type": "Submersible borehole pump — low head boosting",
+      "type": "Submersible borehole pump \u00e2\u20ac\u201d low head boosting",
       "image_url": "",
       "pdf_url": "/datasheets/WU_SP3_SAMPLE.pdf",
       "applications": [
@@ -754,9 +722,7 @@
         "Floating impellers",
         "Water-lubricated journal bearings"
       ],
-      "estimated_annual_kwh": 1200,
-      "price_range_eur": "350-600",
-      "price_range_usd": "385-670",
+      "price_range_usd": "4087",
       "competitor_equivalents": {
         "wilo": "Wilo Sub TWU 4-0303",
         "ksb": "KSB UPA 100C 3A/3",
@@ -768,7 +734,7 @@
       "model": "SP 5A-5",
       "family": "SP",
       "category": "Submersible",
-      "type": "Submersible borehole pump — medium head irrigation/supply",
+      "type": "Submersible borehole pump \u00e2\u20ac\u201d medium head irrigation/supply",
       "image_url": "",
       "pdf_url": "/datasheets/WU_SP5_SAMPLE.pdf",
       "applications": [
@@ -793,14 +759,12 @@
       },
       "features": [
         "Stainless steel construction (AISI 304)",
-        "5-stage design — best for 29-35m head",
-        "High flow capacity (up to 8 m³/h)",
+        "5-stage design \u00e2\u20ac\u201d best for 29-35m head",
+        "High flow capacity (up to 8 m\u00c2\u00b3/h)",
         "Sand-resistant",
         "Floating impellers for axial thrust compensation"
       ],
-      "estimated_annual_kwh": 3500,
-      "price_range_eur": "700-1100",
-      "price_range_usd": "780-1200",
+      "price_range_usd": "1898",
       "competitor_equivalents": {
         "wilo": "Wilo Sub TWU 4-0506",
         "ksb": "KSB UPA 100C 5A/5",
@@ -812,7 +776,7 @@
       "model": "SQ 2-130 N",
       "family": "SQ",
       "category": "Submersible",
-      "type": "Submersible well pump — fixed speed deep borehole",
+      "type": "Submersible well pump \u00e2\u20ac\u201d fixed speed deep borehole",
       "image_url": "",
       "pdf_url": "/datasheets/WU_SQ2_SAMPLE.pdf",
       "applications": [
@@ -840,11 +804,9 @@
         "Stainless steel construction",
         "130-stage multistage design",
         "Sand-resistant bearings",
-        "Fixed speed — reliable for constant-demand boreholes"
+        "Fixed speed \u00e2\u20ac\u201d reliable for constant-demand boreholes"
       ],
-      "estimated_annual_kwh": 5500,
-      "price_range_eur": "800-1300",
-      "price_range_usd": "900-1450",
+      "price_range_usd": "1624",
       "competitor_equivalents": {
         "wilo": "Wilo Sub TWU 4-0206 DM",
         "ksb": "KSB UPZ 100C 2/130",
@@ -856,7 +818,7 @@
       "model": "SQ 3-120 N",
       "family": "SQ",
       "category": "Submersible",
-      "type": "Submersible well pump — fixed speed deep borehole (larger flow)",
+      "type": "Submersible well pump \u00e2\u20ac\u201d fixed speed deep borehole (larger flow)",
       "image_url": "",
       "pdf_url": "/datasheets/WU_SQ3_SAMPLE.pdf",
       "applications": [
@@ -883,12 +845,10 @@
         "Deep borehole capability (up to 140m)",
         "Stainless steel construction",
         "120-stage multistage design",
-        "Higher flow than SQ 2 series (up to 4 m³/h)",
+        "Higher flow than SQ 2 series (up to 4 m\u00c2\u00b3/h)",
         "Sand-resistant bearings"
       ],
-      "estimated_annual_kwh": 5500,
-      "price_range_eur": "900-1400",
-      "price_range_usd": "1000-1560",
+      "price_range_usd": "3311",
       "competitor_equivalents": {
         "wilo": "Wilo Sub TWU 4-0308 DM",
         "ksb": "KSB UPZ 100C 3/120",
@@ -900,7 +860,7 @@
       "model": "SQE 2-130 N",
       "family": "SQE",
       "category": "Submersible",
-      "type": "Smart submersible well pump — variable speed domestic",
+      "type": "Smart submersible well pump \u00e2\u20ac\u201d variable speed domestic",
       "image_url": "",
       "pdf_url": "/datasheets/WU_SQE2_SAMPLE.pdf",
       "applications": [
@@ -934,9 +894,7 @@
         "Smart domestic water management",
         "130-stage multistage design"
       ],
-      "estimated_annual_kwh": 4200,
-      "price_range_eur": "1200-1800",
-      "price_range_usd": "1350-2000",
+      "price_range_usd": "5260",
       "competitor_equivalents": {
         "wilo": "Wilo Sub TWU 4-0206 EM",
         "ksb": "KSB Ixo Flow 2/130",

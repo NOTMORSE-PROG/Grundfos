@@ -157,7 +157,7 @@ export function buildExplanationPrompt(
   const expertiseClause = expertise === 'layperson'
     ? `\n\nCRITICAL — NON-TECHNICAL USER: This user describes their needs in everyday language (floors, home, "low water pressure") — NOT in engineering specs.
 - NEVER mention m³/h, m head, kPa, kW values, flow rates, head figures, or any raw engineering numbers in your response text.
-- Instead describe pump fit in plain language: "right-sized for your building", "handles your heating loop well", "perfect for a ${"{floors}"}-floor office". Use their actual situation (building type, floors, problem) — not spec values.
+- Instead describe pump fit in plain language: "right-sized for your building", "handles your heating loop well", "perfect for your 10-floor office". Use their actual situation (building type, floors, problem) — not spec values.
 - Savings (₱xxx/year) are always fine — money is universally understood.
 - Lead with VALUE: what problem it solves, why it fits, and the savings. Technical specs are on the cards — you don't need to say them.`
     : `\n\nNOTE — TECHNICAL USER: This user provided engineering specs or used pump terminology. Feel free to mention the duty point (m³/h, m head), power figures, and efficiency specs naturally — the user appreciates precision.`;

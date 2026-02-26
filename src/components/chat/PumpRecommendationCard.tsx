@@ -49,7 +49,6 @@ interface CatalogPump {
   applications: string[];
   features: string[];
   specs: Record<string, unknown>;
-  estimated_annual_kwh: number | string;
   price_range_usd: string;
   price_range_php?: string;
   roi?: ROISummary;

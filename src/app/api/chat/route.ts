@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import { getGroqClient } from "@/lib/groq";
-import { buildQuestionSystemPrompt, buildExplanationPrompt, EXPLANATION_PROMPT, COMPARISON_PROMPT, PRODUCT_CONTRAST_PROMPT } from "@/lib/prompts";
+import { buildQuestionSystemPrompt, buildExplanationPrompt, COMPARISON_PROMPT, PRODUCT_CONTRAST_PROMPT } from "@/lib/prompts";
 import { getServiceClient } from "@/lib/supabase";
 import { extractIntent, getNextAction, detectEvalDomain, buildComparisonResult, detectUserExpertise, type EngineResult, type RecommendedPump, type ConversationState, type UserExpertise } from "@/lib/recommendation-engine";
 import { parseMessageMetadata } from "@/lib/parse-message-metadata";
@@ -489,6 +489,12 @@ export async function POST(request: NextRequest) {
       const pump2Name = pump2?.model || "";
       const pump2Savings = pump2 ? `₱${Math.round(pump2.roi.annual_savings).toLocaleString()}/year` : "";
 
+      // Expertise addendum for prompts that don't go through buildExplanationPrompt
+      // (comparison & competitor paths). Mirrors the plain-language rule for laypersons.
+      const comparisonExpertiseNote = userExpertise === 'layperson'
+        ? `\n\nCRITICAL — NON-TECHNICAL USER: NEVER mention m³/h, m head, kPa, kW values, or raw engineering numbers in your text. Use plain language: "handles bigger buildings", "right-sized for home use", "more powerful option". Savings (₱xxx/yr) are always fine.`
+        : `\n\nNOTE — TECHNICAL USER: Feel free to mention specific values (m³/h, m head, kW) naturally.`;
+
       chatMessages.push({
         role: "system",
         content: isPumpInfo
@@ -497,15 +503,17 @@ Give a factual 2-3 sentence overview: what category it belongs to (${topPump?.ca
 Specs are shown in the card below — do NOT repeat them verbatim. Do NOT frame this as a recommendation or mention their system/building — they haven't told you anything about that yet.
 Start with "The ${topPumpName} is..." — use the model name exactly as written.`
           : isProductComparison
-          ? `${basePrompt}
+          ? `${basePrompt}${comparisonExpertiseNote}
 ${specsAreUserProvided
-  ? `User's actual duty point: ${state.flow_m3h} m³/h at ${state.head_m} m head — use this to determine which pump is the better fit.`
+  ? userExpertise === 'layperson'
+    ? `The user has specific requirements — use this to determine which pump fits better, but express it as "better suited for your setup" without quoting raw numbers.`
+    : `User's actual duty point: ${state.flow_m3h} m³/h at ${state.head_m} m head — use this to determine which pump is the better fit.`
   : `IMPORTANT: The user asked for a direct model comparison. Do NOT assume or reference any building type, application, or use case — you don't know it. Focus only on the objective spec differences between the two models.`}
 
 PUMP NAMES — copy EXACTLY:
   • Pump A: ${topPumpName}${topPump?.specs?.max_flow_m3h ? ` (max flow: ${topPump.specs.max_flow_m3h} m³/h, max head: ${topPump.specs.max_head_m} m, power: ${topPump.specs.power_kw} kW)` : ""}${topPump?.roi ? `, saves ${savings}/year` : ""}
   • Pump B: ${pump2Name}${pump2?.specs?.max_flow_m3h ? ` (max flow: ${pump2.specs.max_flow_m3h} m³/h, max head: ${pump2.specs.max_head_m} m, power: ${pump2.specs.power_kw} kW)` : ""}${pump2?.roi ? `, saves ${pump2Savings}/year` : ""}
-Specs cards are shown below. Write 2-3 sentences on the KEY spec difference.${specsAreUserProvided ? " Give a verdict on which better fits the duty point above." : " State the difference objectively (flow range, power, etc.) and let the user decide which matters for their needs."}${longConvoHint}`
+Specs cards are shown below. Write 2-3 sentences on the KEY spec difference.${specsAreUserProvided ? " Give a verdict on which pump fits the requirements better." : " State the difference objectively and let the user decide which matters for their needs."}${longConvoHint}`
           : `${basePrompt}
 
 User's system: ${app}${buildingLine ? ` — ${buildingLine}` : ""}.
@@ -692,6 +700,9 @@ FIRST-SENTENCE RULE: Your opening words must introduce ${topPumpName} directly �
 
           // Always send engineAction so client can track post-recommendation state (for guests)
           metadata.engineAction = engineResult.action;
+
+          // Send detected expertise level so the client can adapt UI if needed
+          metadata.userExpertise = userExpertise;
 
           // Comparison flag — tells the frontend to render side-by-side comparison view
           if (engineResult.action === "compare") {
