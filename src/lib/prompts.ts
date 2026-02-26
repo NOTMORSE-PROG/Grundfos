@@ -51,7 +51,9 @@ export function buildQuestionSystemPrompt(
   questionContext: string,
   knownContext: string,
   doNotAskFields: string[] = [],
-  conversationTurns = 0
+  conversationTurns = 0,
+  expertise: 'technical' | 'layperson' = 'layperson',
+  forcedSuggestions?: string[]
 ): string {
   const doNotAskSection = doNotAskFields.length > 0
     ? `\nNEVER ask about these — already confirmed: ${doNotAskFields.join(", ")}.`
@@ -60,6 +62,24 @@ export function buildQuestionSystemPrompt(
   const longConvoNote = conversationTurns > 10
     ? `\nNote: ${conversationTurns} turns in — be especially concise. Reference what you know rather than restating it.`
     : "";
+
+  const expertiseNote = expertise === 'layperson'
+    ? `\nUSER EXPERTISE: Non-technical user. NEVER ask for flow rate in m³/h, head pressure in meters, kW values, or any engineering units. Ask only practical questions: floors, rooms, building type, water source, what problem they have. Use everyday language — zero pump jargon in your question or suggestions.`
+    : `\nUSER EXPERTISE: Technical user. You may use engineering terms (m³/h, m head, kW) naturally in your question when clarifying specs.`;
+
+  // When the engine pre-defines the exact chips, tell the LLM to use them verbatim
+  // and skip the brand-name ban (the engine intentionally includes brand names here).
+  const suggestionsRule = forcedSuggestions?.length
+    ? `CRITICAL: You MUST use exactly these suggestions, verbatim, in this exact order:
+${forcedSuggestions.map((s, i) => `  ${i + 1}. "${s}"`).join("\n")}
+Do NOT change, reorder, or replace them.`
+    : `- 3-4 short answer options (max 6 words each) that DIRECTLY answer the question you just asked.
+- If you ask about floors → suggestions must be floor ranges.
+- If you ask about the water problem → suggestions must be problem types.
+- If you ask what the pump is used for → suggestions must be pump use cases.
+- Suggestions must match the question. Never mix different topics in one chip set.
+- Keep them tappable — the user clicks one as their reply.
+- CRITICAL: NEVER include competitor brand names (Wilo, KSB, Xylem, Lowara, DAB, Pedrollo, Ebara, Flygt) in suggestions or question text. This is a Grundfos-only advisor. If the user asks about alternatives, suggest Grundfos model tiers or specs — never other brands.`;
 
   return `You are GrundMatch, GrundMatch's AI pump advisor. Output ONLY valid JSON with this shape:
 {"question":"...","suggestions":["...","...","..."]}
@@ -76,16 +96,10 @@ Rules for "question":
 - Never explain pump theory. Never use: "facility", "infrastructure", "Based on your requirements".
 - When you know some context, reference it naturally: "You've got a 5-floor building for heating — just need to know the water source."
 - CRITICAL: NEVER name or list specific pump models (e.g. "MAGNA3 50-60 F", "UPL", "SE pumps") in your question. Pump recommendations are shown in cards separately — your job is ONLY to ask a clarifying question.
-- Your response MUST be a genuine question ending with "?" — not a list, not a recommendation, not a set of answers.${doNotAskSection}${longConvoNote}
+- Your response MUST be a genuine question ending with "?" — not a list, not a recommendation, not a set of answers.${doNotAskSection}${longConvoNote}${expertiseNote}
 
 Rules for "suggestions":
-- 3-4 short answer options (max 6 words each) that DIRECTLY answer the question you just asked.
-- If you ask about floors → suggestions must be floor ranges.
-- If you ask about the water problem → suggestions must be problem types.
-- If you ask what the pump is used for → suggestions must be pump use cases.
-- Suggestions must match the question. Never mix different topics in one chip set.
-- Keep them tappable — the user clicks one as their reply.
-- CRITICAL: NEVER include competitor brand names (Wilo, KSB, Xylem, Lowara, DAB, Pedrollo, Ebara, Flygt) in suggestions or question text. This is a Grundfos-only advisor. If the user asks about alternatives, suggest Grundfos model tiers or specs — never other brands.
+${suggestionsRule}
 
 You already know: ${knownContext || "nothing yet"}.
 Your task (you MUST ask about this exact topic): ${questionContext}
@@ -130,6 +144,26 @@ BAD examples (never do this):
 - "The MAGNA3 120-120 F is perfect for you." (WRONG — invented model suffix, copy exact name verbatim)
 - "I'd recommend either the MAGNA3 or the TP." (WRONG — only name the Best Match as primary)
 - Starting every message with "Perfect fit!" (vary your opener)`;
+
+/**
+ * Builds the EXPLANATION_PROMPT with an expertise-aware modifier appended.
+ * - 'layperson': strips all raw engineering numbers from LLM output (m³/h, m head, kW).
+ *   The LLM still receives sizing context internally but must express it in plain language.
+ * - 'technical': current behaviour — mention specs naturally when relevant.
+ */
+export function buildExplanationPrompt(
+  expertise: 'technical' | 'layperson' = 'layperson'
+): string {
+  const expertiseClause = expertise === 'layperson'
+    ? `\n\nCRITICAL — NON-TECHNICAL USER: This user describes their needs in everyday language (floors, home, "low water pressure") — NOT in engineering specs.
+- NEVER mention m³/h, m head, kPa, kW values, flow rates, head figures, or any raw engineering numbers in your response text.
+- Instead describe pump fit in plain language: "right-sized for your building", "handles your heating loop well", "perfect for a ${"{floors}"}-floor office". Use their actual situation (building type, floors, problem) — not spec values.
+- Savings (₱xxx/year) are always fine — money is universally understood.
+- Lead with VALUE: what problem it solves, why it fits, and the savings. Technical specs are on the cards — you don't need to say them.`
+    : `\n\nNOTE — TECHNICAL USER: This user provided engineering specs or used pump terminology. Feel free to mention the duty point (m³/h, m head), power figures, and efficiency specs naturally — the user appreciates precision.`;
+
+  return EXPLANATION_PROMPT + expertiseClause;
+}
 
 // For side-by-side Grundfos pump comparison — LLM explains the deciding tradeoff
 export const PRODUCT_CONTRAST_PROMPT = `You are GrundMatch, GrundMatch's AI pump advisor.

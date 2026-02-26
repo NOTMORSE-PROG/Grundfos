@@ -1,8 +1,8 @@
 import { NextRequest } from "next/server";
 import { getGroqClient } from "@/lib/groq";
-import { buildQuestionSystemPrompt, EXPLANATION_PROMPT, COMPARISON_PROMPT, PRODUCT_CONTRAST_PROMPT } from "@/lib/prompts";
+import { buildQuestionSystemPrompt, buildExplanationPrompt, EXPLANATION_PROMPT, COMPARISON_PROMPT, PRODUCT_CONTRAST_PROMPT } from "@/lib/prompts";
 import { getServiceClient } from "@/lib/supabase";
-import { extractIntent, getNextAction, detectEvalDomain, buildComparisonResult, type EngineResult, type RecommendedPump, type ConversationState } from "@/lib/recommendation-engine";
+import { extractIntent, getNextAction, detectEvalDomain, buildComparisonResult, detectUserExpertise, type EngineResult, type RecommendedPump, type ConversationState, type UserExpertise } from "@/lib/recommendation-engine";
 import { parseMessageMetadata } from "@/lib/parse-message-metadata";
 import { extractIntentWithLLM, type LLMExtractedIntent } from "@/lib/extract-intent-llm";
 import { getLiveCarbonIntensity } from "@/lib/carbon-intensity";
@@ -144,6 +144,11 @@ export async function POST(request: NextRequest) {
 
     // Conversation length — used for context-awareness in prompts and quality threshold
     const conversationTurns = Math.floor(allMessages.length / 2);
+
+    // ─── Detect user expertise level (dynamic, inferred from all user messages) ─
+    // 'technical' = user used m³/h, duty point, IEC, etc. → can see raw engineering numbers
+    // 'layperson' = user describes situation in everyday terms → plain language only
+    const userExpertise: UserExpertise = detectUserExpertise(allMessages);
 
     // Detect last engine action + whether any recommendation was ever shown.
     // For signed-in users: read from Supabase message metadata (full history scan).
@@ -366,7 +371,9 @@ export async function POST(request: NextRequest) {
           questionContext,
           knownContextStr,
           doNotAskFields,
-          conversationTurns
+          conversationTurns,
+          userExpertise,
+          engineResult.suggestions?.length ? engineResult.suggestions : undefined
         );
 
         const qResponse = await callWithRetry(
@@ -410,21 +417,27 @@ export async function POST(request: NextRequest) {
         // Fallback handled below
       }
 
-      // Fallback if LLM failed
+      // Fallback question if LLM failed
       if (!aiQuestion) aiQuestion = "Could you tell me a bit more about what you need?";
-      if (aiSuggestions.length === 0 && engineResult.suggestions) {
+      // Engine suggestions always take priority — LLM-generated chips are only used
+      // when the engine didn't specify any (prevents LLM from dropping brand names etc.)
+      if (engineResult.suggestions?.length) {
         aiSuggestions = engineResult.suggestions;
+      } else if (aiSuggestions.length === 0) {
+        aiSuggestions = [];
       }
     } else {
       // Recommendation / comparison mode: choose prompt based on mode
       const isCompetitor = engineResult.isCompetitorReplacement;
       const isProductComparison = engineResult.action === "compare";
       const isPumpInfo = engineResult.isPumpInfoRequest === true;
+      // Use expertise-aware explanation prompt for standard recommendations.
+      // Comparisons and competitor-replacement prompts get the expertise addendum inline below.
       const basePrompt = isProductComparison
         ? PRODUCT_CONTRAST_PROMPT
         : isCompetitor
           ? COMPARISON_PROMPT
-          : EXPLANATION_PROMPT;
+          : buildExplanationPrompt(userExpertise);
 
       const topPump = engineResult.pumps?.[0];
       const savings = topPump
@@ -453,8 +466,13 @@ export async function POST(request: NextRequest) {
 
       const dp = engineResult.dutyPoint;
       const specsAreUserProvided = state.flow_m3h != null && state.head_m != null;
+      // For laypersons: include duty point as internal sizing context for the LLM but
+      // explicitly forbid it from surfacing raw numbers in the response text.
+      // For technical users: expose the duty point naturally so the LLM can cite it.
       const dutyLine = dp
-        ? `Duty point: ${dp.estimated_flow_m3h} m³/h at ${dp.estimated_head_m} m head (${specsAreUserProvided ? "user-provided exact specs" : "estimated from building parameters — mention this is an estimate"})`
+        ? userExpertise === 'layperson'
+          ? `Internal sizing context only (NEVER mention these numbers in your text — use plain language like "right-sized for your building"): ${dp.estimated_flow_m3h} m³/h at ${dp.estimated_head_m} m head (${specsAreUserProvided ? "user-provided" : "estimated from building parameters"})`
+          : `Duty point: ${dp.estimated_flow_m3h} m³/h at ${dp.estimated_head_m} m head (${specsAreUserProvided ? "user-provided exact specs" : "estimated from building parameters — mention this is an estimate"})`
         : "";
       const buildingLine = [
         state.buildingSize && `${state.buildingSize} building`,
@@ -714,7 +732,6 @@ FIRST-SENTENCE RULE: Your opening words must introduce ${topPumpName} directly �
               applications: pump.applications,
               features: pump.features,
               specs: pump.specs,
-              estimated_annual_kwh: pump.estimated_annual_kwh,
               price_range_usd: pump.price_range_usd,
               price_range_php: pump.price_range_php,
               roi: pump.roi,

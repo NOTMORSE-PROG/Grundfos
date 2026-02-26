@@ -41,9 +41,7 @@ export interface CatalogPump {
   applications: string[];
   features: string[];
   specs: Record<string, unknown>;
-  estimated_annual_kwh: number | string;
   price_range_usd: string;
-  price_range_eur: string;
   competitor_equivalents?: Record<string, string>;
 }
 
@@ -472,12 +470,22 @@ export function extractIntent(messages: Array<{ role: string; content: string }>
     if (pattern.test(allText)) { state.problem = problem; break; }
   }
 
-  // Competitor pump
+  // Competitor pump (also catches "Grundfos (older model)" chip for own-brand replacement)
   const competitorMatch = allText.match(COMPETITOR_PATTERN);
   if (competitorMatch) {
     state.existingPumpBrand = competitorMatch[1];
     const modelMatch = allText.match(PUMP_MODEL_PATTERN);
     if (modelMatch) state.existingPump = modelMatch[1];
+  }
+  // "Grundfos (older model)" chip — own-brand upgrade, not in COMPETITOR_PATTERN
+  if (!state.existingPumpBrand && /grundfos\s*\(?older\s+model\)?/i.test(latestText)) {
+    state.existingPumpBrand = "Grundfos";
+  }
+  // "I have the model number" chip — user knows the exact model; mark brand as "unknown"
+  // so the engine enters the replacement path and asks for the model number
+  if (!state.existingPumpBrand && /I\s+have\s+(the\s+)?model\s+(number|no\.?)/i.test(latestText)) {
+    state.existingPumpBrand = "unknown";
+    state.problem = state.problem ?? "replacement";
   }
 
   // Power from OCR
@@ -1761,4 +1769,46 @@ export function buildComparisonResult(
   };
 
   return [buildPump(p1), buildPump(p2)];
+}
+
+// ─── User Expertise Detection ─────────────────────────────────────────────────
+// Dynamically infers whether the user understands pump engineering terminology.
+// Returns 'technical' if they used any flow/head/motor units or engineering concepts;
+// 'layperson' otherwise (everyday language: floors, home, "low pressure", etc.).
+// Runs on ALL user messages so a technical user who starts vague is detected
+// once they provide specs, and stays technical for the rest of the conversation.
+
+export type UserExpertise = 'technical' | 'layperson';
+
+export function detectUserExpertise(
+  messages: Array<{ role: string; content: string }>
+): UserExpertise {
+  const userText = messages
+    .filter((m) => m.role === 'user')
+    .map((m) => m.content)
+    .join(' ');
+
+  // Strong technical signals — any single match means the user understands pump specs
+  const technicalSignals: RegExp[] = [
+    /\b\d+(?:\.\d+)?\s*m[³3]\/h\b/i,              // m³/h flow rate (explicit)
+    /\b\d+(?:\.\d+)?\s*(?:gpm|l\/s|lpm)\b/i,       // other flow units (GPM, L/s, LPM)
+    /\bduty[\s-]?point\b/i,                         // "duty point"
+    /\bNPSH\b/,                                     // Net Positive Suction Head
+    /\bIE[0-9C]\b/,                                 // IE3, IE2, IEC efficiency classes
+    /\bIP[0-9]{2}\b/,                               // IP55, IP68 protection ratings
+    /\bVFD\b|\binverter[\s-]?drive\b/i,             // Variable Frequency Drive
+    /\bpump[\s-]?curve\b|\bperformance[\s-]?curve\b/i, // hydraulic curves
+    /\b\d+(?:\.\d+)?\s*m\s+(?:head|TDH)\b/i,       // "10 m head" or "10 m TDH"
+    /\btotal[\s-]?dynamic[\s-]?head\b|\bTDH\b/,    // TDH
+    /\bNPSHa?\b|\bcavitat/i,                        // NPSH / cavitation
+    /\bhydraulic[\s-]?grade\b|\bimpeller\b/i,       // impeller / hydraulic
+    /\bBEP\b/,                                      // Best Efficiency Point
+    /\bkPa\b|\bpsi\b(?!\s*problem)|\b\d+\s*bar\b/i, // pressure units (kPa, PSI, bar)
+    /\bflow[\s-]?rate\b.*\bm[³3]\/h\b/i,           // "flow rate ... m³/h"
+    /\bhead[\s-]?pressure\b|\bpressure[\s-]?head\b/i, // technical head terminology
+    /\befficiency[\s-]?class\b|\benergy[\s-]?class\b/i, // motor/pump efficiency class
+    /\bmotor[\s-]?drive\b|\bvariable[\s-]?speed\s+drive\b/i, // motor-drive terminology
+  ];
+
+  return technicalSignals.some((p) => p.test(userText)) ? 'technical' : 'layperson';
 }
