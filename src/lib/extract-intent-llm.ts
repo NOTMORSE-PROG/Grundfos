@@ -2,7 +2,13 @@ import Groq from "groq-sdk";
 import type { ConversationState } from "@/lib/recommendation-engine";
 
 export interface LLMExtractedIntent {
-  application?: "heating" | "cooling" | "domestic_water" | "water_supply" | "wastewater" | "dosing";
+  application?:
+    | "heating"
+    | "cooling"
+    | "domestic_water"
+    | "water_supply"
+    | "wastewater"
+    | "dosing";
   buildingSize?: "small" | "medium" | "large";
   floors?: number;
   bathrooms?: number;
@@ -12,7 +18,12 @@ export interface LLMExtractedIntent {
   motor_kw?: number;
   existingPumpBrand?: string;
   existingPump?: string;
-  problem?: "low_pressure" | "no_water" | "replacement" | "new_install" | "energy_saving";
+  problem?:
+    | "low_pressure"
+    | "no_water"
+    | "replacement"
+    | "new_install"
+    | "energy_saving";
 }
 
 const EXTRACTION_SYSTEM_PROMPT = `Extract pump requirements from this conversation. Output ONLY valid JSON.
@@ -105,7 +116,8 @@ function buildStateContext(currentState: Partial<ConversationState>): string {
   if (currentState.flow_m3h != null) known.flow_m3h = currentState.flow_m3h;
   if (currentState.head_m != null) known.head_m = currentState.head_m;
   if (currentState.motor_kw != null) known.motor_kw = currentState.motor_kw;
-  if (currentState.existingPumpBrand) known.existingPumpBrand = currentState.existingPumpBrand;
+  if (currentState.existingPumpBrand)
+    known.existingPumpBrand = currentState.existingPumpBrand;
   if (currentState.existingPump) known.existingPump = currentState.existingPump;
   if (currentState.problem) known.problem = currentState.problem;
 
@@ -117,7 +129,7 @@ function buildStateContext(currentState: Partial<ConversationState>): string {
 export async function extractIntentWithLLM(
   groq: Groq,
   messages: Array<{ role: string; content: string }>,
-  currentState?: Partial<ConversationState>
+  currentState?: Partial<ConversationState>,
 ): Promise<LLMExtractedIntent> {
   try {
     const stateContext = currentState ? buildStateContext(currentState) : "";
@@ -130,12 +142,10 @@ export async function extractIntentWithLLM(
         // Last 8 messages = up to 4 exchanges — better coverage without prompt bloat.
         // The state injection above keeps the LLM anchored to confirmed facts
         // even when early messages fall outside this window.
-        ...messages
-          .slice(-8)
-          .map((m) => ({
-            role: m.role as "user" | "assistant",
-            content: m.content,
-          })),
+        ...messages.slice(-8).map((m) => ({
+          role: m.role as "user" | "assistant",
+          content: m.content,
+        })),
       ],
       temperature: 0,
       max_tokens: 250,
@@ -150,28 +160,51 @@ export async function extractIntentWithLLM(
       parsed = JSON.parse(text) as Record<string, unknown>;
     } catch {
       // Strip markdown fences if present and retry
-      const stripped = text.replace(/```(?:json)?\s*/gi, "").replace(/```/g, "").trim();
+      const stripped = text
+        .replace(/```(?:json)?\s*/gi, "")
+        .replace(/```/g, "")
+        .trim();
       try {
         parsed = JSON.parse(stripped) as Record<string, unknown>;
       } catch {
-        console.error("[extractIntentWithLLM] JSON parse failed, raw text:", text);
+        console.error(
+          "[extractIntentWithLLM] JSON parse failed, raw text:",
+          text,
+        );
         return {};
       }
     }
 
     // Clean: only return fields that are non-null and match expected types
     const result: LLMExtractedIntent = {};
-    if (typeof parsed.application === "string") result.application = parsed.application as LLMExtractedIntent["application"];
-    if (typeof parsed.buildingSize === "string") result.buildingSize = parsed.buildingSize as LLMExtractedIntent["buildingSize"];
-    if (typeof parsed.floors === "number" && parsed.floors > 0) result.floors = parsed.floors;
-    if (typeof parsed.bathrooms === "number" && parsed.bathrooms > 0) result.bathrooms = parsed.bathrooms;
-    if (typeof parsed.waterSource === "string") result.waterSource = parsed.waterSource as LLMExtractedIntent["waterSource"];
-    if (typeof parsed.flow_m3h === "number" && parsed.flow_m3h > 0) result.flow_m3h = parsed.flow_m3h;
-    if (typeof parsed.head_m === "number" && parsed.head_m > 0) result.head_m = parsed.head_m;
-    if (typeof parsed.motor_kw === "number" && parsed.motor_kw > 0) result.motor_kw = parsed.motor_kw;
-    if (typeof parsed.existingPumpBrand === "string" && parsed.existingPumpBrand) result.existingPumpBrand = parsed.existingPumpBrand;
-    if (typeof parsed.existingPump === "string" && parsed.existingPump) result.existingPump = parsed.existingPump;
-    if (typeof parsed.problem === "string") result.problem = parsed.problem as LLMExtractedIntent["problem"];
+    if (typeof parsed.application === "string")
+      result.application =
+        parsed.application as LLMExtractedIntent["application"];
+    if (typeof parsed.buildingSize === "string")
+      result.buildingSize =
+        parsed.buildingSize as LLMExtractedIntent["buildingSize"];
+    if (typeof parsed.floors === "number" && parsed.floors > 0)
+      result.floors = parsed.floors;
+    if (typeof parsed.bathrooms === "number" && parsed.bathrooms > 0)
+      result.bathrooms = parsed.bathrooms;
+    if (typeof parsed.waterSource === "string")
+      result.waterSource =
+        parsed.waterSource as LLMExtractedIntent["waterSource"];
+    if (typeof parsed.flow_m3h === "number" && parsed.flow_m3h > 0)
+      result.flow_m3h = parsed.flow_m3h;
+    if (typeof parsed.head_m === "number" && parsed.head_m > 0)
+      result.head_m = parsed.head_m;
+    if (typeof parsed.motor_kw === "number" && parsed.motor_kw > 0)
+      result.motor_kw = parsed.motor_kw;
+    if (
+      typeof parsed.existingPumpBrand === "string" &&
+      parsed.existingPumpBrand
+    )
+      result.existingPumpBrand = parsed.existingPumpBrand;
+    if (typeof parsed.existingPump === "string" && parsed.existingPump)
+      result.existingPump = parsed.existingPump;
+    if (typeof parsed.problem === "string")
+      result.problem = parsed.problem as LLMExtractedIntent["problem"];
 
     return result;
   } catch (err) {

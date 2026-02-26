@@ -1,5 +1,9 @@
 import pumpCatalog from "@/data/pump-catalog.json";
-import { deriveDutyPoint, type BuildingParams, type DutyPoint } from "@/lib/calculations/sizing";
+import {
+  deriveDutyPoint,
+  type BuildingParams,
+  type DutyPoint,
+} from "@/lib/calculations/sizing";
 import {
   calcROISummary,
   DEFAULT_OPERATING_HOURS,
@@ -9,10 +13,21 @@ import {
 
 // ─── Types ───────────────────────────────────────────────────────────
 
-export type Application = "heating" | "cooling" | "domestic_water" | "water_supply" | "wastewater" | "dosing";
+export type Application =
+  | "heating"
+  | "cooling"
+  | "domestic_water"
+  | "water_supply"
+  | "wastewater"
+  | "dosing";
 export type BuildingSize = "small" | "medium" | "large";
 type WaterSource = "mains" | "well" | "tank";
-type Problem = "low_pressure" | "no_water" | "replacement" | "new_install" | "energy_saving";
+type Problem =
+  | "low_pressure"
+  | "no_water"
+  | "replacement"
+  | "new_install"
+  | "energy_saving";
 
 export interface ConversationState {
   application?: Application;
@@ -84,53 +99,122 @@ function safeNumber(val: unknown): number | null {
 
 const APP_PATTERNS: Array<{ app: Application; pattern: RegExp }> = [
   // Heating
-  { app: "heating", pattern: /\b(heat(?:ing)?|radiator|boiler|warm(?:th|ing)?|hvac|underfloor|radiant|furnace)\b/i },
-  { app: "heating", pattern: /\b(too\s+cold|freezing|winter|pipe\s*freeze|frost)\b/i },
+  {
+    app: "heating",
+    pattern:
+      /\b(heat(?:ing)?|radiator|boiler|warm(?:th|ing)?|hvac|underfloor|radiant|furnace)\b/i,
+  },
+  {
+    app: "heating",
+    pattern: /\b(too\s+cold|freezing|winter|pipe\s*freeze|frost)\b/i,
+  },
   // Cooling
-  { app: "cooling", pattern: /\b(cool(?:ing)?|chiller|air[\s-]?condition(?:ing|er)?|ac\b|refrigerat|ventilat)/i },
-  { app: "cooling", pattern: /\b(too\s+hot|overheat(?:ing)?|summer|swelter|humid)\b/i },
+  {
+    app: "cooling",
+    pattern:
+      /\b(cool(?:ing)?|chiller|air[\s-]?condition(?:ing|er)?|ac\b|refrigerat|ventilat)/i,
+  },
+  {
+    app: "cooling",
+    pattern: /\b(too\s+hot|overheat(?:ing)?|summer|swelter|humid)\b/i,
+  },
   // Water supply (broad — buildings, commercial, industrial, agriculture)
   // NOTE: "no water", "low pressure", "weak flow" are PROBLEM types (captured in PROBLEM_PATTERNS),
   // not application types. Listing them here causes domestic-water situations ("my home has no water")
   // to wrongly score as water_supply, skipping the domestic_water question gates.
-  { app: "water_supply", pattern: /\b(water[\s-]?supply|pressure[\s-]?boost(?:ing)?|municipal|irrigat|borehole|well[\s-]?pump|boosting|building[\s-]?water|water[\s-]?tower|fire[\s-]?(?:protect|fight|suppress))\b/i },
+  {
+    app: "water_supply",
+    pattern:
+      /\b(water[\s-]?supply|pressure[\s-]?boost(?:ing)?|municipal|irrigat|borehole|well[\s-]?pump|boosting|building[\s-]?water|water[\s-]?tower|fire[\s-]?(?:protect|fight|suppress))\b/i,
+  },
   // Industrial process / booster — "process pump", "industrial process", "industry booster"
   // These are fluid-handling applications, mapped to water_supply domain
-  { app: "water_supply", pattern: /\b(industrial[\s-]?(?:booster|process|water|fluid)|process[\s-]?(?:water|pump|cooling|line|fluid)|industry[\s-]?booster|process[\s-]?application)\b/i },
+  {
+    app: "water_supply",
+    pattern:
+      /\b(industrial[\s-]?(?:booster|process|water|fluid)|process[\s-]?(?:water|pump|cooling|line|fluid)|industry[\s-]?booster|process[\s-]?application)\b/i,
+  },
   // Note: building type words (office, hotel, factory) removed — LLM handles these contextually
   // Domestic water
-  { app: "domestic_water", pattern: /\b(domestic|household|home\b|house\b|residential|tap[\s-]?water|hot[\s-]?water|shower|faucet|bathroom|kitchen|condo\b|flat\b|my[\s-]?(?:house|home|place|apartment|condo|flat))\b/i },
-  { app: "domestic_water", pattern: /\b(washing[\s-]?machine|dishwasher|garden[\s-]?(?:hose|water)|pool\b|rain[\s-]?water|cistern)\b/i },
+  {
+    app: "domestic_water",
+    pattern:
+      /\b(domestic|household|home\b|house\b|residential|tap[\s-]?water|hot[\s-]?water|shower|faucet|bathroom|kitchen|condo\b|flat\b|my[\s-]?(?:house|home|place|apartment|condo|flat))\b/i,
+  },
+  {
+    app: "domestic_water",
+    pattern:
+      /\b(washing[\s-]?machine|dishwasher|garden[\s-]?(?:hose|water)|pool\b|rain[\s-]?water|cistern)\b/i,
+  },
   // Wastewater
-  { app: "wastewater", pattern: /\b(wastewater|sewage|sewer|drainage|septic|effluent|sewerage|basement\s+\w*\s*flood(?:ing)?|flood(?:ing|ed)?\s+(?:my\s+)?basement|sump)\b/i },
+  {
+    app: "wastewater",
+    pattern:
+      /\b(wastewater|sewage|sewer|drainage|septic|effluent|sewerage|basement\s+\w*\s*flood(?:ing)?|flood(?:ing|ed)?\s+(?:my\s+)?basement|sump)\b/i,
+  },
   // Dosing
-  { app: "dosing", pattern: /\b(dos(?:ing|e)|chlorinat(?:ion|e)|ph[\s-]?(?:adjust|control)|water[\s-]?treatment[\s-]?(?:dos|chemical)|flocculat|disinfect(?:ion|ant)?)\b/i },
+  {
+    app: "dosing",
+    pattern:
+      /\b(dos(?:ing|e)|chlorinat(?:ion|e)|ph[\s-]?(?:adjust|control)|water[\s-]?treatment[\s-]?(?:dos|chemical)|flocculat|disinfect(?:ion|ant)?)\b/i,
+  },
 ];
 
 const SIZE_PATTERNS: Array<{ size: BuildingSize; pattern: RegExp }> = [
   // Large — check first so "20-floor office" matches large before "office" matches medium
-  { size: "large", pattern: /\b(large|big|high[\s-]?rise|tower|skyscraper|hospital|mall|campus|9[\s-]?floor|10[\s-]?floor|\d{2,}[\s-]?floor)\b/i },
-  { size: "large", pattern: /\b(?:(?:[5-9]\d|\d{3,})[\s-]?(?:room|unit)s?)\b/i },
+  {
+    size: "large",
+    pattern:
+      /\b(large|big|high[\s-]?rise|tower|skyscraper|hospital|mall|campus|9[\s-]?floor|10[\s-]?floor|\d{2,}[\s-]?floor)\b/i,
+  },
+  {
+    size: "large",
+    pattern: /\b(?:(?:[5-9]\d|\d{3,})[\s-]?(?:room|unit)s?)\b/i,
+  },
   // Small
-  { size: "small", pattern: /\b(small|1[\s-]?(?:to|-)[\s-]?3|one[\s-]?to[\s-]?three|few|tiny|single[\s-]?famil|house\b|villa|bungalow|cottage|1[\s-]?floor|2[\s-]?floor|3[\s-]?floor|duplex|studio)\b/i },
-  { size: "small", pattern: /\b(1[\s-]?(?:bed)?room|2[\s-]?(?:bed)?room|3[\s-]?(?:bed)?room)\b/i },
+  {
+    size: "small",
+    pattern:
+      /\b(small|1[\s-]?(?:to|-)[\s-]?3|one[\s-]?to[\s-]?three|few|tiny|single[\s-]?famil|house\b|villa|bungalow|cottage|1[\s-]?floor|2[\s-]?floor|3[\s-]?floor|duplex|studio)\b/i,
+  },
+  {
+    size: "small",
+    pattern:
+      /\b(1[\s-]?(?:bed)?room|2[\s-]?(?:bed)?room|3[\s-]?(?:bed)?room)\b/i,
+  },
   { size: "small", pattern: /\b(small[\s-]?(?:business|shop|office|farm))\b/i },
   // Medium — most generic patterns last
-  { size: "medium", pattern: /\b(medium|4[\s-]?(?:to|-)[\s-]?8|four[\s-]?to[\s-]?eight|mid[\s-]?(?:size|rise)?|apartment|commercial|condominium|4[\s-]?floor|5[\s-]?floor|6[\s-]?floor|7[\s-]?floor|8[\s-]?floor)\b/i },
-  { size: "medium", pattern: /\b(school|clinic|restaurant|warehouse|gym|church|shop(?:ping)?|hotel|factory|office|resort)\b/i },
-  { size: "medium", pattern: /\b(?:(?:1\d|2\d|3\d|4\d|50)[\s-]?(?:room|unit)s?)\b/i },
+  {
+    size: "medium",
+    pattern:
+      /\b(medium|4[\s-]?(?:to|-)[\s-]?8|four[\s-]?to[\s-]?eight|mid[\s-]?(?:size|rise)?|apartment|commercial|condominium|4[\s-]?floor|5[\s-]?floor|6[\s-]?floor|7[\s-]?floor|8[\s-]?floor)\b/i,
+  },
+  {
+    size: "medium",
+    pattern:
+      /\b(school|clinic|restaurant|warehouse|gym|church|shop(?:ping)?|hotel|factory|office|resort)\b/i,
+  },
+  {
+    size: "medium",
+    pattern: /\b(?:(?:1\d|2\d|3\d|4\d|50)[\s-]?(?:room|unit)s?)\b/i,
+  },
 ];
 
 // m³/h can appear as mÂ³/h (UTF-8 double-encoding) or m3/h — match all variants
-const FLOW_PATTERN = /(\d+(?:\.\d+)?)\s*(?:m(?:[³³3]|Â[³3]?)\/h|m3\/h|cubic[\s-]?met(?:er|re)s?[\s-]?per[\s-]?hour|cmh)/i;
+const FLOW_PATTERN =
+  /(\d+(?:\.\d+)?)\s*(?:m(?:[³³3]|Â[³3]?)\/h|m3\/h|cubic[\s-]?met(?:er|re)s?[\s-]?per[\s-]?hour|cmh)/i;
 // "X m³/h, Y m" — standard pump duty point notation (flow then head, comma/space separated)
-const DUTY_POINT_PATTERN = /(\d+(?:\.\d+)?)\s*(?:m(?:[³³3]|Â[³3]?)\/h|m3\/h)\s*[,;]?\s*(?:at\s+)?(\d+(?:\.\d+)?)\s*m\b(?!\s*[³3²\/Â])/i;
-const HEAD_PATTERN = /(?:at\s+)?(\d+(?:\.\d+)?)\s*(?:met(?:er|re)s?|m)\s*(?:head|of[\s-]?head)/i;
+const DUTY_POINT_PATTERN =
+  /(\d+(?:\.\d+)?)\s*(?:m(?:[³³3]|Â[³3]?)\/h|m3\/h)\s*[,;]?\s*(?:at\s+)?(\d+(?:\.\d+)?)\s*m\b(?!\s*[³3²\/Â])/i;
+const HEAD_PATTERN =
+  /(?:at\s+)?(\d+(?:\.\d+)?)\s*(?:met(?:er|re)s?|m)\s*(?:head|of[\s-]?head)/i;
 // Â added to exclusion — prevents "35 mÂ³/h" from being misread as head=35
 const HEAD_PATTERN_LOOSE = /(\d+(?:\.\d+)?)\s*m\b(?!\s*[³3²\/Â])/i;
 // Matches "3 floors", "3-4 floors", "3 to 4 floors", "10+ floors", "3 storey"
-const FLOORS_PATTERN = /(\d+)(?:\+|[\s-]+(?:to[\s-]+)?\d+)?[\s-]*(?:floor|stor(?:e?y|ies)|palapag)/i;
-const BATHROOM_PATTERN = /(\d+)\s*(?:bathroom|bath(?:room)?s?|toilet|cr\b|restroom|t&b|comfort\s*room)/i;
+const FLOORS_PATTERN =
+  /(\d+)(?:\+|[\s-]+(?:to[\s-]+)?\d+)?[\s-]*(?:floor|stor(?:e?y|ies)|palapag)/i;
+const BATHROOM_PATTERN =
+  /(\d+)\s*(?:bathroom|bath(?:room)?s?|toilet|cr\b|restroom|t&b|comfort\s*room)/i;
 
 // Non-SI unit conversion patterns
 const GPM_PATTERN = /(\d+(?:\.\d+)?)\s*(?:gpm|gallon[s]?\s*per\s*min(?:ute)?)/i;
@@ -140,19 +224,27 @@ const FT_HEAD_PATTERN = /(\d+(?:\.\d+)?)\s*ft\b/i;
 const HP_PATTERN = /(\d+(?:\.\d+)?)\s*hp\b/i;
 const MOTOR_KW_PATTERN = /(\d+(?:\.\d+)?)\s*kW\s*(?:motor|power)/i;
 
-const COMPETITOR_PATTERN = /\b(wilo|ksb|xylem|lowara|dab|pedrollo|ebara|flygt|prominent|iwaki)\b/i;
+const COMPETITOR_PATTERN =
+  /\b(wilo|ksb|xylem|lowara|dab|pedrollo|ebara|flygt|prominent|iwaki)\b/i;
 const PUMP_MODEL_PATTERN = /\b([A-Z][A-Za-z]*[\s-]?\d[\w\-./]*)\b/;
-const POWER_PATTERN = /(?:power|rated|watt(?:s|age)?):?\s*(\d+(?:\.\d+)?)\s*kw/i;
-const POWER_PATTERN_W = /(?:power|rated|watt(?:s|age)?):?\s*(\d+(?:\.\d+)?)\s*w\b/i;
+const POWER_PATTERN =
+  /(?:power|rated|watt(?:s|age)?):?\s*(\d+(?:\.\d+)?)\s*kw/i;
+const POWER_PATTERN_W =
+  /(?:power|rated|watt(?:s|age)?):?\s*(\d+(?:\.\d+)?)\s*w\b/i;
 
-const CORRECTION_PATTERN = /\b(no[,.]?\s|actually|i\s+meant?|not\s+\w+[,.]?\s*(it'?s|for)|change\s+(it\s+)?to|switch\s+to|wrong|correct(?:ion)?)\b/i;
-const GREETING_PATTERN = /^\s*(h(ello|i|ey|owdy)|yo\b|sup\b|good\s*(morning|afternoon|evening|day)|what'?s?\s*up|greetings|salut|hola)\s*[!?.]*\s*$/i;
+const CORRECTION_PATTERN =
+  /\b(no[,.]?\s|actually|i\s+meant?|not\s+\w+[,.]?\s*(it'?s|for)|change\s+(it\s+)?to|switch\s+to|wrong|correct(?:ion)?)\b/i;
+const GREETING_PATTERN =
+  /^\s*(h(ello|i|ey|owdy)|yo\b|sup\b|good\s*(morning|afternoon|evening|day)|what'?s?\s*up|greetings|salut|hola)\s*[!?.]*\s*$/i;
 
 // ─── Latest-wins spec search ─────────────────────────────────────────
 // Searches user messages from most recent to oldest so that mid-conversation
 // spec corrections always override earlier values — regardless of how many
 // messages separate the old and new specs.
-function findLatestMatchInMessages(userTexts: string[], pattern: RegExp): RegExpMatchArray | null {
+function findLatestMatchInMessages(
+  userTexts: string[],
+  pattern: RegExp,
+): RegExpMatchArray | null {
   for (let i = userTexts.length - 1; i >= 0; i--) {
     const match = userTexts[i].match(pattern);
     if (match) return match;
@@ -161,19 +253,46 @@ function findLatestMatchInMessages(userTexts: string[], pattern: RegExp): RegExp
 }
 
 const WATER_SOURCE_PATTERNS: Array<{ source: WaterSource; pattern: RegExp }> = [
-  { source: "well", pattern: /\b(well|borehole|ground\s*water|deep\s*well)\b/i },
+  {
+    source: "well",
+    pattern: /\b(well|borehole|ground\s*water|deep\s*well)\b/i,
+  },
   { source: "tank", pattern: /\b(tank|cistern|reservoir|rain\s*water)\b/i },
   // "city/tap water", "city water", "tap water", "mains", "municipal", "piped" — all mean mains supply.
   // The city[\s/]?tap pattern catches the common shorthand "city/tap water" from suggestion buttons.
-  { source: "mains", pattern: /\b(mains|municipal|city[\s\/]?tap|city\s*water|tap\s*water|piped|metro\s*water|water\s*district|public\s*water)\b/i },
+  {
+    source: "mains",
+    pattern:
+      /\b(mains|municipal|city[\s\/]?tap|city\s*water|tap\s*water|piped|metro\s*water|water\s*district|public\s*water)\b/i,
+  },
 ];
 
 const PROBLEM_PATTERNS: Array<{ problem: Problem; pattern: RegExp }> = [
-  { problem: "low_pressure", pattern: /\b(low[\s-]?pressure|weak[\s-]?(?:pressure|flow)|no[\s-]?pressure|poor[\s-]?pressure|not[\s-]?enough[\s-]?(?:water|pressure)|pressure[\s-]?drop|barely|mababa|kulang|halos\s*wala)\b/i },
-  { problem: "no_water",     pattern: /\b(no[\s-]?water|water[\s-]?(?:stopped|cut|out)|dry[\s-]?tap|can'?t[\s-]?get[\s-]?water|patay\s*tubig|wala\s*tubig)\b/i },
-  { problem: "replacement",  pattern: /\b(replac(?:e|ing|ement)|swap(?:ping)?|upgrade|old[\s-]?pump|broken[\s-]?pump|failing|failed|worn[\s-]?out|palitan|sira|gulong)\b/i },
-  { problem: "new_install",  pattern: /\b(new[\s-]?(?:install|pump|system)|install(?:ing|ation)?|set[\s-]?up|brand[\s-]?new|building[\s-]?new|bagong)\b/i },
-  { problem: "energy_saving",pattern: /\b(energy[\s-]?sav(?:ing|e)|reduc(?:e|ing)[\s-]?(?:cost|bill|energy)|electricity[\s-]?bill|save[\s-]?money|too[\s-]?expensive[\s-]?to[\s-]?run|mahal\s*kuryente)\b/i },
+  {
+    problem: "low_pressure",
+    pattern:
+      /\b(low[\s-]?pressure|weak[\s-]?(?:pressure|flow)|no[\s-]?pressure|poor[\s-]?pressure|not[\s-]?enough[\s-]?(?:water|pressure)|pressure[\s-]?drop|barely|mababa|kulang|halos\s*wala)\b/i,
+  },
+  {
+    problem: "no_water",
+    pattern:
+      /\b(no[\s-]?water|water[\s-]?(?:stopped|cut|out)|dry[\s-]?tap|can'?t[\s-]?get[\s-]?water|patay\s*tubig|wala\s*tubig)\b/i,
+  },
+  {
+    problem: "replacement",
+    pattern:
+      /\b(replac(?:e|ing|ement)|swap(?:ping)?|upgrade|old[\s-]?pump|broken[\s-]?pump|failing|failed|worn[\s-]?out|palitan|sira|gulong)\b/i,
+  },
+  {
+    problem: "new_install",
+    pattern:
+      /\b(new[\s-]?(?:install|pump|system)|install(?:ing|ation)?|set[\s-]?up|brand[\s-]?new|building[\s-]?new|bagong)\b/i,
+  },
+  {
+    problem: "energy_saving",
+    pattern:
+      /\b(energy[\s-]?sav(?:ing|e)|reduc(?:e|ing)[\s-]?(?:cost|bill|energy)|electricity[\s-]?bill|save[\s-]?money|too[\s-]?expensive[\s-]?to[\s-]?run|mahal\s*kuryente)\b/i,
+  },
 ];
 
 // ─── Family Preference Scoring (NOT hard blocks) ────────────────────
@@ -181,82 +300,134 @@ const PROBLEM_PATTERNS: Array<{ problem: Problem; pattern: RegExp }> = [
 
 // Catalog contains exactly the 21 eval-kit pumps (see challenge5_eval_kit/).
 // SCALA2, Hydro MPC-E, SEG, SE removed — not in the provided dataset.
-const FAMILY_PREFERENCE: Partial<Record<Application, Record<string, number>>> = {
-  domestic_water: { SQE: 20, SQ: 12, SP: 8 },   // well/borehole pumps for domestic water
-  heating:        { MAGNA3: 15, MAGNA1: 12, TP: 10, ALPHA2: 8, ALPHA1: 7, UPM3: 8, UPM2: 6, UP: 5 },
-  cooling:        { MAGNA3: 15, MAGNA1: 12, TP: 10, ALPHA2: 8 },
-  water_supply:   { CR: 15, CM: 12, SP: 12 },
-  // MTH intentionally omitted from water_supply — industrial coolant, only via DOMAIN_PREFERENCE["IN"].
-  // SEG/SE omitted — not in eval kit.
-  wastewater:     {},
-  dosing:         {},
-};
+const FAMILY_PREFERENCE: Partial<Record<Application, Record<string, number>>> =
+  {
+    domestic_water: { SQE: 20, SQ: 12, SP: 8 }, // well/borehole pumps for domestic water
+    heating: {
+      MAGNA3: 15,
+      MAGNA1: 12,
+      TP: 10,
+      ALPHA2: 8,
+      ALPHA1: 7,
+      UPM3: 8,
+      UPM2: 6,
+      UP: 5,
+    },
+    cooling: { MAGNA3: 15, MAGNA1: 12, TP: 10, ALPHA2: 8 },
+    water_supply: { CR: 15, CM: 12, SP: 12 },
+    // MTH intentionally omitted from water_supply — industrial coolant, only via DOMAIN_PREFERENCE["IN"].
+    // SEG/SE omitted — not in eval kit.
+    wastewater: {},
+    dosing: {},
+  };
 
 // ─── Domain-Aware Preferences (eval domains override/supplement FAMILY_PREFERENCE) ──
 // These are applied when an evalDomain is detected from the query.
 const DOMAIN_PREFERENCE: Record<string, Record<string, number>> = {
-  "CBS":           { MAGNA3: 12, MAGNA1: 12, TP: 10, UPS: 8 },
+  CBS: { MAGNA3: 12, MAGNA1: 12, TP: 10, UPS: 8 },
   // ALPHA2 gets a slight edge (8.4 vs 8) over UPM2 within DBS-Heating.
   // Both pumps compete physically for the 2.0–2.5 m³/h range, but ALPHA2's
   // rated point (2.14 m³/h / 4.36 m) and better efficiency (EEI=0.2) make it
   // the preferred Grundfos choice — this delta (0.4) is calibrated to just tip
   // the tie-break without distorting higher-flow cases where UPM3/ALPHA1 dominate.
-  "DBS-Heating":   { UPM3: 8, ALPHA2: 8.4, ALPHA1: 8, UPM2: 8 },
-  "DBS-HotWater":  { UP: 12, UPS: 12, COMFORT: 10 },
-  "IN":            { CR: 15, CM: 12, MTH: 10, MG: 8 },
+  "DBS-Heating": { UPM3: 8, ALPHA2: 8.4, ALPHA1: 8, UPM2: 8 },
+  "DBS-HotWater": { UP: 12, UPS: 12, COMFORT: 10 },
+  IN: { CR: 15, CM: 12, MTH: 10, MG: 8 },
   "IN-MotorDrive": { MG: 20, CR: 5, CM: 3 },
-  "IN-Coolant":    { MTH: 20, CR: 5, CM: 3 },   // "industry-coolant" → MTH specific
-  "IN-Process":    { CR: 20, CM: 10, MTH: 5 },  // "industry-process" → CR/CM specific
-  "IN-Booster":    { CR: 15, CM: 18, MTH: 3 },  // "industry-booster" → CM for high head, CR for low head
-  "WU-Borehole":   { SQ: 20, SP: 5, SQE: 3 },
-  "WU-Domestic":   { SQE: 20, SQ: 3 },
+  "IN-Coolant": { MTH: 20, CR: 5, CM: 3 }, // "industry-coolant" → MTH specific
+  "IN-Process": { CR: 20, CM: 10, MTH: 5 }, // "industry-process" → CR/CM specific
+  "IN-Booster": { CR: 15, CM: 18, MTH: 3 }, // "industry-booster" → CM for high head, CR for low head
+  "WU-Borehole": { SQ: 20, SP: 5, SQE: 3 },
+  "WU-Domestic": { SQE: 20, SQ: 3 },
   "WU-Irrigation": { SP: 18, SQ: 5, SQE: 3 },
-  "WU":            { SP: 15, SQ: 12, SQE: 10 },
+  WU: { SP: 15, SQ: 12, SQE: 10 },
 };
 
 // ─── Domain Detection from Query Text ───────────────────────────────
 export function detectEvalDomain(queryText: string): string | undefined {
   // More specific sub-domains checked FIRST before general domain catches
-  if (/cbs-hvac|cbs\b.*hvac|commercial\s+building.*hvac/i.test(queryText)) return "CBS";
-  if (/dbs-hotwater|dbs\b.*hot[\s-]?water/i.test(queryText)) return "DBS-HotWater";
+  if (/cbs-hvac|cbs\b.*hvac|commercial\s+building.*hvac/i.test(queryText))
+    return "CBS";
+  if (/dbs-hotwater|dbs\b.*hot[\s-]?water/i.test(queryText))
+    return "DBS-HotWater";
   // Informal hot-water patterns — must appear BEFORE "dbs-heating" so "hotwater" corrections
   // take priority in the same message. Also catches natural-language HWR from real chat users.
-  if (/\bfor\s+hot[\s-]?water\b|\bhotwater\b|\bhot[\s-]?water[\s-]?recirc|\bHWR\b/i.test(queryText)) return "DBS-HotWater";
-  if (/hot[\s-]?water\s+(?:recirculation|circul|pump|loop|system|supply)/i.test(queryText)) return "DBS-HotWater";
+  if (
+    /\bfor\s+hot[\s-]?water\b|\bhotwater\b|\bhot[\s-]?water[\s-]?recirc|\bHWR\b/i.test(
+      queryText,
+    )
+  )
+    return "DBS-HotWater";
+  if (
+    /hot[\s-]?water\s+(?:recirculation|circul|pump|loop|system|supply)/i.test(
+      queryText,
+    )
+  )
+    return "DBS-HotWater";
   if (/domestic[\s-]?hot[\s-]?water\b/i.test(queryText)) return "DBS-HotWater";
   if (/dbs-heating|dbs\b.*heat/i.test(queryText)) return "DBS-Heating";
   // WU sub-domains — accept natural language ("borehole pump", "irrigation pump") in addition
   // to eval-kit phrases ("wu-borehole service", "wu-irrigation service")
-  if (/wu-borehole|borehole[\s-]?service/i.test(queryText)) return "WU-Borehole";
-  if (/\bborehole\b|\bdeep[\s-]?well[\s-]?pump\b/i.test(queryText)) return "WU-Borehole";
-  if (/wu-domestic|domestic[\s-]?service/i.test(queryText)) return "WU-Domestic";
-  if (/wu-irrigation|irrigation[\s-]?service/i.test(queryText)) return "WU-Irrigation";
+  if (/wu-borehole|borehole[\s-]?service/i.test(queryText))
+    return "WU-Borehole";
+  if (/\bborehole\b|\bdeep[\s-]?well[\s-]?pump\b/i.test(queryText))
+    return "WU-Borehole";
+  if (/wu-domestic|domestic[\s-]?service/i.test(queryText))
+    return "WU-Domestic";
+  if (/wu-irrigation|irrigation[\s-]?service/i.test(queryText))
+    return "WU-Irrigation";
   // Natural-language irrigation — matches "irrigation pump", "farm irrigation", "agricultural irrigation"
   if (/\birrigation\b/i.test(queryText)) return "WU-Irrigation";
   if (/wu-boosting/i.test(queryText)) return "WU";
   // IN sub-domains — must check before generic "industry-" catch.
   // Patterns accept both "industry-" (hyphenated eval-kit prefix) and "industrial" (natural language).
   // Also catches IEC motor queries — "IEC motor", "IEC standard motor", "IEC induction motor"
-  if (/industr(?:y|ial)[\s-]?(?:motordrive|motor\s*drive)|motor[\s-]?drive\s+process/i.test(queryText)) return "IN-MotorDrive";
-  if (/\bIEC[\s-]?(?:standard[\s-]?)?(?:induction[\s-]?)?motor\b|\bIE[23]\s+(?:motor|efficiency)\b/i.test(queryText)) return "IN-MotorDrive";
-  if (/industr(?:y|ial)[\s-]?(?:coolant|cool(?:ing)?)/i.test(queryText)) return "IN-Coolant";
+  if (
+    /industr(?:y|ial)[\s-]?(?:motordrive|motor\s*drive)|motor[\s-]?drive\s+process/i.test(
+      queryText,
+    )
+  )
+    return "IN-MotorDrive";
+  if (
+    /\bIEC[\s-]?(?:standard[\s-]?)?(?:induction[\s-]?)?motor\b|\bIE[23]\s+(?:motor|efficiency)\b/i.test(
+      queryText,
+    )
+  )
+    return "IN-MotorDrive";
+  if (/industr(?:y|ial)[\s-]?(?:coolant|cool(?:ing)?)/i.test(queryText))
+    return "IN-Coolant";
   if (/industr(?:y|ial)[\s-]?process\b/i.test(queryText)) return "IN-Process";
   if (/industr(?:y|ial)[\s-]?booster/i.test(queryText)) return "IN-Booster";
-  if (/industry-/i.test(queryText)) return "IN";  // fallback for any other industry- prefix
+  if (/industry-/i.test(queryText)) return "IN"; // fallback for any other industry- prefix
   // Contextual inference — order matters: more specific first
   if (/motor[\s-]?drive/i.test(queryText)) return "IN-MotorDrive";
-  if (/industrial[\s-]?coolant|process[\s-]?cool(?:ing)?|coolant[\s-]?pump/i.test(queryText)) return "IN-Coolant";
+  if (
+    /industrial[\s-]?coolant|process[\s-]?cool(?:ing)?|coolant[\s-]?pump/i.test(
+      queryText,
+    )
+  )
+    return "IN-Coolant";
   // Natural-language industrial — "industrial pump", "industrial setting/application/use"
-  if (/\bindustrial\s+(?:pump|application|setting|use|process|system|fluid)\b/i.test(queryText)) return "IN";
+  if (
+    /\bindustrial\s+(?:pump|application|setting|use|process|system|fluid)\b/i.test(
+      queryText,
+    )
+  )
+    return "IN";
   // Commercial HVAC contextual — large-scale heating/cooling without explicit CBS keyword
-  if (/commercial\s+(?:hvac|heating|cooling|building)|district\s+heating/i.test(queryText)) return "CBS";
+  if (
+    /commercial\s+(?:hvac|heating|cooling|building)|district\s+heating/i.test(
+      queryText,
+    )
+  )
+    return "CBS";
   if (/water\s+utility/i.test(queryText)) return "WU";
   return undefined;
 }
 
 // Category exclusions — fundamentally different pump types
 const CATEGORY_EXCLUSIONS: Record<string, Application[]> = {
-  Dosing:    ["dosing"],     // DDA pumps only for dosing
+  Dosing: ["dosing"], // DDA pumps only for dosing
   Wastewater: ["wastewater"], // SEG/SE only for wastewater
 };
 
@@ -273,29 +444,61 @@ const CATEGORY_EXCLUSIONS: Record<string, Application[]> = {
 
 // Families that are WRONG for industrial (IN / IN-MotorDrive) contexts
 const IN_EXCLUDED_FAMILIES = new Set([
-  "ALPHA2", "ALPHA1", "UPM3", "UPM2", "UP", "UPS", "COMFORT",  // DBS residential circulators
-  "MAGNA3", "MAGNA1",                                             // CBS commercial HVAC circulators
-  "SP", "SQ", "SQE",                                             // WU borehole/submersible pumps
+  "ALPHA2",
+  "ALPHA1",
+  "UPM3",
+  "UPM2",
+  "UP",
+  "UPS",
+  "COMFORT", // DBS residential circulators
+  "MAGNA3",
+  "MAGNA1", // CBS commercial HVAC circulators
+  "SP",
+  "SQ",
+  "SQE", // WU borehole/submersible pumps
 ]);
 
 // Families that are WRONG for water utility (WU-*) contexts
 const WU_EXCLUDED_FAMILIES = new Set([
-  "ALPHA2", "ALPHA1", "UPM3", "UPM2", "UP", "UPS", "COMFORT",  // DBS residential
-  "MAGNA3", "MAGNA1", "TP",                                       // CBS commercial HVAC
-  "CR", "CM", "MG", "MTH",                                       // IN industrial process
+  "ALPHA2",
+  "ALPHA1",
+  "UPM3",
+  "UPM2",
+  "UP",
+  "UPS",
+  "COMFORT", // DBS residential
+  "MAGNA3",
+  "MAGNA1",
+  "TP", // CBS commercial HVAC
+  "CR",
+  "CM",
+  "MG",
+  "MTH", // IN industrial process
 ]);
 
 // Families that are WRONG for commercial HVAC (CBS) contexts
 const CBS_EXCLUDED_FAMILIES = new Set([
-  "SP", "SQ", "SQE",         // WU borehole/submersible pumps
-  "CR", "CM", "MG", "MTH",  // IN industrial process/motor pumps
+  "SP",
+  "SQ",
+  "SQE", // WU borehole/submersible pumps
+  "CR",
+  "CM",
+  "MG",
+  "MTH", // IN industrial process/motor pumps
 ]);
 
 // Families that are WRONG for domestic/residential (DBS-*) contexts
 const DBS_EXCLUDED_FAMILIES = new Set([
-  "SP", "SQ", "SQE",                // WU borehole pumps (excluded unless waterSource=well)
-  "CR", "CM", "MG", "MTH",          // IN industrial
-  "TP", "MAGNA3", "MAGNA1",         // CBS large-scale commercial HVAC (too big for homes)
+  "SP",
+  "SQ",
+  "SQE", // WU borehole pumps (excluded unless waterSource=well)
+  "CR",
+  "CM",
+  "MG",
+  "MTH", // IN industrial
+  "TP",
+  "MAGNA3",
+  "MAGNA1", // CBS large-scale commercial HVAC (too big for homes)
 ]);
 
 /**
@@ -303,7 +506,10 @@ const DBS_EXCLUDED_FAMILIES = new Set([
  * This enforces domain boundaries — e.g. residential circulators never appear for industrial queries.
  * Returns false (don't exclude) when the domain is unknown/ambiguous.
  */
-function isDomainExcluded(pumpFamily: string, effectiveDomain: string): boolean {
+function isDomainExcluded(
+  pumpFamily: string,
+  effectiveDomain: string,
+): boolean {
   const fk = pumpFamily.toUpperCase().replace(/\d+/g, "").trim();
   if (effectiveDomain.startsWith("IN")) return IN_EXCLUDED_FAMILIES.has(fk);
   if (effectiveDomain.startsWith("WU")) return WU_EXCLUDED_FAMILIES.has(fk);
@@ -312,15 +518,23 @@ function isDomainExcluded(pumpFamily: string, effectiveDomain: string): boolean 
   return false;
 }
 
-function isCategoryExcluded(pumpCategory: string, application: Application): boolean {
+function isCategoryExcluded(
+  pumpCategory: string,
+  application: Application,
+): boolean {
   for (const [category, allowedApps] of Object.entries(CATEGORY_EXCLUSIONS)) {
     if (pumpCategory.toLowerCase().includes(category.toLowerCase())) {
       return !allowedApps.includes(application);
     }
   }
   // Exclude dosing/wastewater pumps from non-matching applications
-  if (application !== "wastewater" && pumpCategory.toLowerCase().includes("wastewater")) return true;
-  if (application !== "dosing" && pumpCategory.toLowerCase().includes("dosing")) return true;
+  if (
+    application !== "wastewater" &&
+    pumpCategory.toLowerCase().includes("wastewater")
+  )
+    return true;
+  if (application !== "dosing" && pumpCategory.toLowerCase().includes("dosing"))
+    return true;
   return false;
 }
 
@@ -328,7 +542,12 @@ function isCategoryExcluded(pumpCategory: string, application: Application): boo
 
 function detectApplication(allText: string): Application | undefined {
   const scores: Record<Application, number> = {
-    heating: 0, cooling: 0, water_supply: 0, domestic_water: 0, wastewater: 0, dosing: 0,
+    heating: 0,
+    cooling: 0,
+    water_supply: 0,
+    domestic_water: 0,
+    wastewater: 0,
+    dosing: 0,
   };
   for (const { app, pattern } of APP_PATTERNS) {
     const matches = allText.match(new RegExp(pattern.source, "gi"));
@@ -340,9 +559,13 @@ function detectApplication(allText: string): Application | undefined {
 
 // ─── Extract Intent ──────────────────────────────────────────────────
 
-export function extractIntent(messages: Array<{ role: string; content: string }>): ConversationState {
+export function extractIntent(
+  messages: Array<{ role: string; content: string }>,
+): ConversationState {
   const state: ConversationState = {};
-  const userTexts = messages.filter((m) => m.role === "user").map((m) => m.content);
+  const userTexts = messages
+    .filter((m) => m.role === "user")
+    .map((m) => m.content);
   if (userTexts.length === 0) return state;
 
   const allText = userTexts.join(" ");
@@ -361,11 +584,17 @@ export function extractIntent(messages: Array<{ role: string; content: string }>
   // Users frequently correct building size mid-conversation without explicit correction language
   // (e.g., "i need it for small office" after previously saying "large office building").
   for (const { size, pattern } of SIZE_PATTERNS) {
-    if (pattern.test(latestText)) { state.buildingSize = size; break; }
+    if (pattern.test(latestText)) {
+      state.buildingSize = size;
+      break;
+    }
   }
   if (!state.buildingSize) {
     for (const { size, pattern } of SIZE_PATTERNS) {
-      if (pattern.test(allText)) { state.buildingSize = size; break; }
+      if (pattern.test(allText)) {
+        state.buildingSize = size;
+        break;
+      }
     }
   }
 
@@ -376,48 +605,65 @@ export function extractIntent(messages: Array<{ role: string; content: string }>
   // (30, 12) don't form a duty-point pattern but MUST still take priority over history.
   const latestDutyMatch = latestText.match(DUTY_POINT_PATTERN);
   const latestFlowMatch = latestText.match(FLOW_PATTERN);
-  const latestHeadMatch = latestText.match(HEAD_PATTERN) || latestText.match(HEAD_PATTERN_LOOSE);
+  const latestHeadMatch =
+    latestText.match(HEAD_PATTERN) || latestText.match(HEAD_PATTERN_LOOSE);
   // Only fall back to history duty-point when the latest message has NO individual specs.
   // If the latest message has either flow or head, use the individual extraction branch instead.
-  const historyDutyMatch = (!latestDutyMatch && !latestFlowMatch && !latestHeadMatch)
-    ? findLatestMatchInMessages(userTexts, DUTY_POINT_PATTERN)
-    : null;
+  const historyDutyMatch =
+    !latestDutyMatch && !latestFlowMatch && !latestHeadMatch
+      ? findLatestMatchInMessages(userTexts, DUTY_POINT_PATTERN)
+      : null;
   const dutyMatch = latestDutyMatch || historyDutyMatch;
   if (dutyMatch) {
     state.flow_m3h = parseFloat(dutyMatch[1]);
     state.head_m = parseFloat(dutyMatch[2]);
   } else {
     // Flow: latest message first (already computed above), then reverse-history search
-    const flowMatch = latestFlowMatch || findLatestMatchInMessages(userTexts, FLOW_PATTERN);
+    const flowMatch =
+      latestFlowMatch || findLatestMatchInMessages(userTexts, FLOW_PATTERN);
     if (flowMatch) state.flow_m3h = parseFloat(flowMatch[1]);
 
     // Head: latest message first (already computed above), then reverse-history search
-    const historyHeadMatch = latestHeadMatch ? null : (
-      findLatestMatchInMessages(userTexts, HEAD_PATTERN) ||
-      findLatestMatchInMessages(userTexts, HEAD_PATTERN_LOOSE)
-    );
+    const historyHeadMatch = latestHeadMatch
+      ? null
+      : findLatestMatchInMessages(userTexts, HEAD_PATTERN) ||
+        findLatestMatchInMessages(userTexts, HEAD_PATTERN_LOOSE);
     const headMatch = latestHeadMatch || historyHeadMatch;
     if (headMatch) state.head_m = parseFloat(headMatch[1]);
   }
 
   // Non-SI unit conversions (only if SI unit not already found)
   if (!state.flow_m3h) {
-    const gpmMatch = latestText.match(GPM_PATTERN) || findLatestMatchInMessages(userTexts, GPM_PATTERN);
-    if (gpmMatch) state.flow_m3h = Math.round(parseFloat(gpmMatch[1]) * 0.2271 * 1000) / 1000;
-    const lpmMatch = latestText.match(LPM_PATTERN) || findLatestMatchInMessages(userTexts, LPM_PATTERN);
-    if (lpmMatch) state.flow_m3h = Math.round(parseFloat(lpmMatch[1]) * 0.06 * 1000) / 1000;
-    const lpsMatch = latestText.match(LPS_PATTERN) || findLatestMatchInMessages(userTexts, LPS_PATTERN);
-    if (lpsMatch) state.flow_m3h = Math.round(parseFloat(lpsMatch[1]) * 3.6 * 1000) / 1000;
+    const gpmMatch =
+      latestText.match(GPM_PATTERN) ||
+      findLatestMatchInMessages(userTexts, GPM_PATTERN);
+    if (gpmMatch)
+      state.flow_m3h =
+        Math.round(parseFloat(gpmMatch[1]) * 0.2271 * 1000) / 1000;
+    const lpmMatch =
+      latestText.match(LPM_PATTERN) ||
+      findLatestMatchInMessages(userTexts, LPM_PATTERN);
+    if (lpmMatch)
+      state.flow_m3h = Math.round(parseFloat(lpmMatch[1]) * 0.06 * 1000) / 1000;
+    const lpsMatch =
+      latestText.match(LPS_PATTERN) ||
+      findLatestMatchInMessages(userTexts, LPS_PATTERN);
+    if (lpsMatch)
+      state.flow_m3h = Math.round(parseFloat(lpsMatch[1]) * 3.6 * 1000) / 1000;
   }
   if (!state.head_m) {
-    const ftMatch = latestText.match(FT_HEAD_PATTERN) || findLatestMatchInMessages(userTexts, FT_HEAD_PATTERN);
-    if (ftMatch) state.head_m = Math.round(parseFloat(ftMatch[1]) * 0.3048 * 1000) / 1000;
+    const ftMatch =
+      latestText.match(FT_HEAD_PATTERN) ||
+      findLatestMatchInMessages(userTexts, FT_HEAD_PATTERN);
+    if (ftMatch)
+      state.head_m = Math.round(parseFloat(ftMatch[1]) * 0.3048 * 1000) / 1000;
   }
 
   // Motor power extraction (hp or kW — for power-only matching)
   // Reverse search so the latest power value wins (e.g., if user corrects "2 kW motor" to "3 kW motor")
   const hpMatch = findLatestMatchInMessages(userTexts, HP_PATTERN);
-  if (hpMatch) state.motor_kw = Math.round(parseFloat(hpMatch[1]) * 0.7457 * 1000) / 1000;
+  if (hpMatch)
+    state.motor_kw = Math.round(parseFloat(hpMatch[1]) * 0.7457 * 1000) / 1000;
   const motorKwMatch = findLatestMatchInMessages(userTexts, MOTOR_KW_PATTERN);
   if (motorKwMatch) state.motor_kw = parseFloat(motorKwMatch[1]);
 
@@ -429,13 +675,20 @@ export function extractIntent(messages: Array<{ role: string; content: string }>
   // MOTOR_KW_PATTERN requires "kW motor/power" qualifier so bare "0.55 kW" is missed —
   // we re-extract from the latest message using a broader kW regex as a fallback.
   const latestHasMotorSpec = /\b\d+(?:\.\d+)?\s*(?:kW|hp)\b/i.test(latestText);
-  if (latestHasMotorSpec && !latestFlowMatch && !latestHeadMatch && !latestDutyMatch) {
+  if (
+    latestHasMotorSpec &&
+    !latestFlowMatch &&
+    !latestHeadMatch &&
+    !latestDutyMatch
+  ) {
     state.flow_m3h = undefined;
     state.head_m = undefined;
     // Re-extract motor_kw from latest message so stale history values are overridden
     const latestHpSpec = latestText.match(HP_PATTERN);
     const latestKwSpec = latestText.match(/\b(\d+(?:\.\d+)?)\s*kW\b/i);
-    if (latestHpSpec) state.motor_kw = Math.round(parseFloat(latestHpSpec[1]) * 0.7457 * 1000) / 1000;
+    if (latestHpSpec)
+      state.motor_kw =
+        Math.round(parseFloat(latestHpSpec[1]) * 0.7457 * 1000) / 1000;
     else if (latestKwSpec) state.motor_kw = parseFloat(latestKwSpec[1]);
   }
 
@@ -457,17 +710,26 @@ export function extractIntent(messages: Array<{ role: string; content: string }>
 
   // Water source — latest message takes priority (user may correct mains → well mid-conversation)
   for (const { source, pattern } of WATER_SOURCE_PATTERNS) {
-    if (pattern.test(latestText)) { state.waterSource = source; break; }
+    if (pattern.test(latestText)) {
+      state.waterSource = source;
+      break;
+    }
   }
   if (!state.waterSource) {
     for (const { source, pattern } of WATER_SOURCE_PATTERNS) {
-      if (pattern.test(allText)) { state.waterSource = source; break; }
+      if (pattern.test(allText)) {
+        state.waterSource = source;
+        break;
+      }
     }
   }
 
   // Problem type detection
   for (const { problem, pattern } of PROBLEM_PATTERNS) {
-    if (pattern.test(allText)) { state.problem = problem; break; }
+    if (pattern.test(allText)) {
+      state.problem = problem;
+      break;
+    }
   }
 
   // Competitor pump (also catches "Grundfos (older model)" chip for own-brand replacement)
@@ -478,12 +740,18 @@ export function extractIntent(messages: Array<{ role: string; content: string }>
     if (modelMatch) state.existingPump = modelMatch[1];
   }
   // "Grundfos (older model)" chip — own-brand upgrade, not in COMPETITOR_PATTERN
-  if (!state.existingPumpBrand && /grundfos\s*\(?older\s+model\)?/i.test(latestText)) {
+  if (
+    !state.existingPumpBrand &&
+    /grundfos\s*\(?older\s+model\)?/i.test(latestText)
+  ) {
     state.existingPumpBrand = "Grundfos";
   }
   // "I have the model number" chip — user knows the exact model; mark brand as "unknown"
   // so the engine enters the replacement path and asks for the model number
-  if (!state.existingPumpBrand && /I\s+have\s+(the\s+)?model\s+(number|no\.?)/i.test(latestText)) {
+  if (
+    !state.existingPumpBrand &&
+    /I\s+have\s+(the\s+)?model\s+(number|no\.?)/i.test(latestText)
+  ) {
     state.existingPumpBrand = "unknown";
     state.problem = state.problem ?? "replacement";
   }
@@ -494,7 +762,8 @@ export function extractIntent(messages: Array<{ role: string; content: string }>
     state.existingPumpPower = parseFloat(powerMatch[1]);
   } else {
     const powerMatchW = allText.match(POWER_PATTERN_W);
-    if (powerMatchW) state.existingPumpPower = parseFloat(powerMatchW[1]) / 1000;
+    if (powerMatchW)
+      state.existingPumpPower = parseFloat(powerMatchW[1]) / 1000;
   }
 
   // "my house" implies domestic_water + small
@@ -508,7 +777,10 @@ export function extractIntent(messages: Array<{ role: string; content: string }>
 
 // ─── Competitor Cross-Reference ─────────────────────────────────────
 
-function findCompetitorMatch(brand: string, model?: string): CatalogPump | undefined {
+function findCompetitorMatch(
+  brand: string,
+  model?: string,
+): CatalogPump | undefined {
   const pumps = (pumpCatalog.pumps || []) as unknown as CatalogPump[];
   const brandLower = brand.toLowerCase();
 
@@ -518,7 +790,11 @@ function findCompetitorMatch(brand: string, model?: string): CatalogPump | undef
       const equiv = pump.competitor_equivalents;
       if (!equiv) continue;
       for (const [key, value] of Object.entries(equiv)) {
-        if (key.toLowerCase() === brandLower && value.toLowerCase().includes(modelLower)) return pump;
+        if (
+          key.toLowerCase() === brandLower &&
+          value.toLowerCase().includes(modelLower)
+        )
+          return pump;
       }
     }
   }
@@ -542,7 +818,7 @@ function calculateConfidence(
   eei: number,
   prefBonus: number,
   isVSD = false,
-  hasActualEEI = false  // true only when pump.specs.eei exists in catalog
+  hasActualEEI = false, // true only when pump.specs.eei exists in catalog
 ): { score: number; label: string } {
   const rawOversizeFactor = Math.max(flowRatio, headRatio);
   // VSD benefit only applies when the pump CAN physically meet the head requirement.
@@ -551,17 +827,19 @@ function calculateConfidence(
   // Example: SCALA2 for domestic water — 3.8× oversize but meets head → cap applies.
   // VSD cap only applies when the pump is ≤3× oversized — massively oversized VSD pumps
   // still waste energy even with speed control and should not receive inflated confidence.
-  const vsdAdjusted = (isVSD && headRatio >= 1.0 && rawOversizeFactor <= 3.0)
-    ? Math.min(rawOversizeFactor, 1.8)
-    : rawOversizeFactor;
+  const vsdAdjusted =
+    isVSD && headRatio >= 1.0 && rawOversizeFactor <= 3.0
+      ? Math.min(rawOversizeFactor, 1.8)
+      : rawOversizeFactor;
   // Head-constraint cap: when head is the binding requirement (headRatio 0.9–1.3) AND the
   // pump appears flow-oversized (flowRatio > 3), the max_flow figure is misleading.
   // A centrifugal pump's H-Q curve means at near-max head it naturally delivers low flow:
   // e.g. TP 40-230/2 (max 18 m³/h at 0m head) at 18m head delivers ~3 m³/h — exactly right.
   // Cap at 2.0 so the formula reflects this is a good head-matched selection, not 6× oversize.
-  const oversizeFactor = (headRatio >= 0.9 && headRatio <= 1.3 && flowRatio > 3)
-    ? Math.min(vsdAdjusted, 2.0)
-    : vsdAdjusted;
+  const oversizeFactor =
+    headRatio >= 0.9 && headRatio <= 1.3 && flowRatio > 3
+      ? Math.min(vsdAdjusted, 2.0)
+      : vsdAdjusted;
 
   let base = 95;
   // Gradual penalty for oversizing
@@ -609,17 +887,25 @@ function getInfoQuality(state: ConversationState): number {
   let score = 0;
   if (state.application) score += 3;
   if (state.buildingSize) score += 2;
-  if (state.floors) score += 3;      // Critical for head calculation — most valuable sizing input
-  if (state.bathrooms) score += 2;   // Directly sizes flow rate
+  if (state.floors) score += 3; // Critical for head calculation — most valuable sizing input
+  if (state.bathrooms) score += 2; // Directly sizes flow rate
   if (state.waterSource) score += 1;
-  if (state.problem) score += 1;     // Context, not sizing — problem alone shouldn't trigger recommend
+  if (state.problem) score += 1; // Context, not sizing — problem alone shouldn't trigger recommend
   return score;
 }
 
 // ─── Next Action Decision ────────────────────────────────────────────
 
-const SIZE_TO_FLOORS: Record<BuildingSize, number> = { small: 2, medium: 5, large: 12 };
-const SIZE_TO_UNITS: Record<BuildingSize, number> = { small: 4, medium: 30, large: 100 };
+const SIZE_TO_FLOORS: Record<BuildingSize, number> = {
+  small: 2,
+  medium: 5,
+  large: 12,
+};
+const SIZE_TO_UNITS: Record<BuildingSize, number> = {
+  small: 4,
+  medium: 30,
+  large: 100,
+};
 
 export function getNextAction(
   state: ConversationState,
@@ -627,18 +913,23 @@ export function getNextAction(
   lastEngineAction?: "recommend" | "ask" | "greet" | "compare",
   energyOptions?: { co2Override?: number },
   hadRecommendation?: boolean,
-  conversationTurns = 0
+  conversationTurns = 0,
 ): EngineResult {
   // ─── Pump info lookup — "what is X", "tell me about X", "show me X specs" ─
   // Fires before all other checks. When the user names a specific catalog model
   // and uses an info-seeking phrase, return a single-pump "recommend" result
   // flagged as isPumpInfoRequest so route.ts uses a factual (not sales) LLM prompt.
   if (latestMessage) {
-    const isInfoRequest = /\b(what\s+is|what'?s\s+(?:the\s+)?|tell\s+me\s+about|about\s+the|info\s+(on|about)|show\s+me|specs?\s+(for|of)|describe|explain)\b/i.test(latestMessage);
+    const isInfoRequest =
+      /\b(what\s+is|what'?s\s+(?:the\s+)?|tell\s+me\s+about|about\s+the|info\s+(on|about)|show\s+me|specs?\s+(for|of)|describe|explain)\b/i.test(
+        latestMessage,
+      );
     if (isInfoRequest) {
       const typedCatalog = pumpCatalog.pumps as unknown as CatalogPump[];
       const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      const found = typedCatalog.find((p) => new RegExp(escapeRe(p.model), "i").test(latestMessage!));
+      const found = typedCatalog.find((p) =>
+        new RegExp(escapeRe(p.model), "i").test(latestMessage!),
+      );
       if (found) {
         const region = DEFAULT_ENERGY_RATES.PH;
         const co2 = energyOptions?.co2Override ?? region.co2;
@@ -648,21 +939,46 @@ export function getNextAction(
         const maxHead = safeNumber(found.specs.max_head_m) || 1;
         const reqFlow = maxFlow * 0.7;
         const reqHead = maxHead * 0.7;
-        const pumpOversizeRatio = Math.max(maxFlow / reqFlow, maxHead / reqHead);
-        const typicalOversizedPower = newPower * Math.min(1.4, pumpOversizeRatio);
-        const efficientPower = newPower * Math.max(1 / Math.max(pumpOversizeRatio, 1), 0.3);
+        const pumpOversizeRatio = Math.max(
+          maxFlow / reqFlow,
+          maxHead / reqHead,
+        );
+        const typicalOversizedPower =
+          newPower * Math.min(1.4, pumpOversizeRatio);
+        const efficientPower =
+          newPower * Math.max(1 / Math.max(pumpOversizeRatio, 1), 0.3);
         const pumpCostPhp = parsePrice(found.price_range_usd) * USD_TO_PHP;
         const roi = calcROISummary(
-          { power_kw: typicalOversizedPower, operating_hours: operatingHours, electricity_rate: region.rate, co2_factor: co2 },
-          { power_kw: efficientPower, operating_hours: operatingHours, electricity_rate: region.rate, co2_factor: co2 },
-          pumpCostPhp
+          {
+            power_kw: typicalOversizedPower,
+            operating_hours: operatingHours,
+            electricity_rate: region.rate,
+            co2_factor: co2,
+          },
+          {
+            power_kw: efficientPower,
+            operating_hours: operatingHours,
+            electricity_rate: region.rate,
+            co2_factor: co2,
+          },
+          pumpCostPhp,
         );
-        const infoPump: RecommendedPump = { ...found, price_range_php: parsePricePhp(found.price_range_usd), roi, matchConfidence: 100, matchLabel: "Exact model" };
+        const infoPump: RecommendedPump = {
+          ...found,
+          price_range_php: parsePricePhp(found.price_range_usd),
+          roi,
+          matchConfidence: 100,
+          matchLabel: "Exact model",
+        };
         return {
           action: "recommend",
           pumps: [infoPump],
           isPumpInfoRequest: true,
-          suggestions: [`Compare ${found.model} with another pump`, "Find a pump for my system", "Show alternatives"],
+          suggestions: [
+            `Compare ${found.model} with another pump`,
+            "Find a pump for my system",
+            "Show alternatives",
+          ],
           state,
         };
       }
@@ -673,7 +989,10 @@ export function getNextAction(
   // "compare X to Y", "X vs Y", "which is better", etc. — always returns a compare
   // action regardless of conversation state, even after a prior recommendation.
   if (latestMessage) {
-    const isComparisonRequest = /\b(compare|vs\.?|versus|which\s+is\s+(better|best)|difference\s+between|better\s+(option|pump|between|choice)|side[\s-]?by[\s-]?side|compare\s+(these|those|the\s+two|them))\b/i.test(latestMessage);
+    const isComparisonRequest =
+      /\b(compare|vs\.?|versus|which\s+is\s+(better|best)|difference\s+between|better\s+(option|pump|between|choice)|side[\s-]?by[\s-]?side|compare\s+(these|those|the\s+two|them))\b/i.test(
+        latestMessage,
+      );
     if (isComparisonRequest) {
       const typedCatalog = pumpCatalog.pumps as unknown as CatalogPump[];
       const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -681,7 +1000,11 @@ export function getNextAction(
         .filter((p) => new RegExp(escapeRe(p.model), "i").test(latestMessage!))
         .map((p) => p.model);
       if (mentioned.length >= 2) {
-        return { action: "compare", comparePumps: [mentioned[0], mentioned[1]] as [string, string], state };
+        return {
+          action: "compare",
+          comparePumps: [mentioned[0], mentioned[1]] as [string, string],
+          state,
+        };
       }
 
       // ── Domain-name compare: "compare DBS-HotWater to CBS-HVAC" ──────────
@@ -689,28 +1012,34 @@ export function getNextAction(
       // on the separator word and detect a domain for each half, then map each
       // domain to its most representative catalog pump.
       const DOMAIN_TO_MODEL: Record<string, string> = {
-        "CBS":           "MAGNA3 100-120 F",
-        "CBS-HVAC":      "MAGNA3 100-120 F",
-        "DBS-Heating":   "ALPHA2 32-80 180",
-        "DBS-HotWater":  "UPS 15-40 130",
+        CBS: "MAGNA3 100-120 F",
+        "CBS-HVAC": "MAGNA3 100-120 F",
+        "DBS-Heating": "ALPHA2 32-80 180",
+        "DBS-HotWater": "UPS 15-40 130",
         "IN-MotorDrive": "MG71C",
-        "IN-Coolant":    "MTH 2-4/2",
-        "IN-Process":    "CR 5-5",
-        "IN-Booster":    "CM 25-4",
-        "IN":            "CR 5-5",
-        "WU-Borehole":   "SQ 2-130 N",
-        "WU-Domestic":   "SQE 2-130 N",
+        "IN-Coolant": "MTH 2-4/2",
+        "IN-Process": "CR 5-5",
+        "IN-Booster": "CM 25-4",
+        IN: "CR 5-5",
+        "WU-Borehole": "SQ 2-130 N",
+        "WU-Domestic": "SQE 2-130 N",
         "WU-Irrigation": "SP 3A-3",
-        "WU":            "SQE 2-130 N",
+        WU: "SQE 2-130 N",
       };
-      const parts = latestMessage.split(/\s+(?:vs\.?|versus|to|and|against|with|or)\s+/i);
+      const parts = latestMessage.split(
+        /\s+(?:vs\.?|versus|to|and|against|with|or)\s+/i,
+      );
       if (parts.length >= 2) {
         const domA = detectEvalDomain(parts[0]);
         const domB = detectEvalDomain(parts[1]);
         const modelA = domA ? DOMAIN_TO_MODEL[domA] : undefined;
         const modelB = domB ? DOMAIN_TO_MODEL[domB] : undefined;
         if (modelA && modelB && modelA !== modelB) {
-          return { action: "compare", comparePumps: [modelA, modelB] as [string, string], state };
+          return {
+            action: "compare",
+            comparePumps: [modelA, modelB] as [string, string],
+            state,
+          };
         }
       }
 
@@ -726,48 +1055,87 @@ export function getNextAction(
   //       even if subsequent clarifying questions changed lastEngineAction to "ask".
   // This prevents the engine from re-running with stale old specs when the user
   // says "Too expensive" or "Show me alternatives" after a clarifying turn.
-  const inPostRecMode = !!latestMessage && (lastEngineAction === "recommend" || lastEngineAction === "compare" || !!hadRecommendation);
+  const inPostRecMode =
+    !!latestMessage &&
+    (lastEngineAction === "recommend" ||
+      lastEngineAction === "compare" ||
+      !!hadRecommendation);
 
   if (inPostRecMode) {
     const hasNewInfo =
-      /\d+\s*(?:floor|stor|m[³3]\/h|m\s+head|bathroom|kw|gpm|lpm|lps)\b/i.test(latestMessage!) ||
+      /\d+\s*(?:floor|stor|m[³3]\/h|m\s+head|bathroom|kw|gpm|lpm|lps)\b/i.test(
+        latestMessage!,
+      ) ||
       // Encoding-robust flow detection — m³/h can appear as mÂ³/h or m3/h in some systems
       /\b\d+(?:\.\d+)?\s*m[^a-z\s]*[\/]h\b/i.test(latestMessage!) ||
-      /\b(heating|cooling|wastewater|dosing|water[\s-]supply|boiler|chiller|irrigat|borehole|well[\s-]pump)\b/i.test(latestMessage!) ||
+      /\b(heating|cooling|wastewater|dosing|water[\s-]supply|boiler|chiller|irrigat|borehole|well[\s-]pump)\b/i.test(
+        latestMessage!,
+      ) ||
       // Application type changes — catches "for hotwater instead" / "for heating" corrections
       /\b(hot[\s-]?water|hotwater)\b/i.test(latestMessage!) ||
-      /\bfor\s+(?:heating|cooling|domestic|hotwater|hot[\s-]?water|irrigation|water[\s-]?supply|borehole)\b/i.test(latestMessage!) ||
+      /\bfor\s+(?:heating|cooling|domestic|hotwater|hot[\s-]?water|irrigation|water[\s-]?supply|borehole)\b/i.test(
+        latestMessage!,
+      ) ||
       // Correction language + application keyword (e.g. "actually for hotwater instead")
-      (CORRECTION_PATTERN.test(latestMessage!) && /\b(heating|cooling|water|hotwater|hot[\s-]?water|domestic|irrigation|borehole|application|use)\b/i.test(latestMessage!)) ||
-      /\b(wilo|ksb|xylem|lowara|dab|pedrollo|ebara|flygt|grundfos)\b/i.test(latestMessage!) ||
-      /\b(small|medium|large)\s*(building|office|house|home|unit|floor)?\b/i.test(latestMessage!);
+      (CORRECTION_PATTERN.test(latestMessage!) &&
+        /\b(heating|cooling|water|hotwater|hot[\s-]?water|domestic|irrigation|borehole|application|use)\b/i.test(
+          latestMessage!,
+        )) ||
+      /\b(wilo|ksb|xylem|lowara|dab|pedrollo|ebara|flygt|grundfos)\b/i.test(
+        latestMessage!,
+      ) ||
+      /\b(small|medium|large)\s*(building|office|house|home|unit|floor)?\b/i.test(
+        latestMessage!,
+      );
 
     if (!hasNewInfo) {
       // Detect specific feedback type to give a more targeted response
-      const wantsCheaper = /\b(too\s*expensive|cheaper|budget|lower\s*price|affordable|cost\s*less|price)\b/i.test(latestMessage!);
-      const wantsAlternatives = /\b(show\s*(?:me\s*)?(?:more|other|alternative|different|option)|other\s*choice|more\s*option|see\s*more|show\s*alternative|any\s+(?:\w+\s+)?option|compact\s+option|smaller\s+(?:pump|option|model)|other\s+model)\b/i.test(latestMessage!);
-      const wantsDifferentType = /\b(wrong\s*type|different\s*pump|simpler|smaller\s*pump|basic|less\s*complex)\b/i.test(latestMessage!);
-      const wantsDifferentSpecs = /\b(different\s*(?:flow|head|pressure|spec)|adjust|change\s*(?:the\s*)?spec|not\s*the\s*right\s*size)\b/i.test(latestMessage!);
+      const wantsCheaper =
+        /\b(too\s*expensive|cheaper|budget|lower\s*price|affordable|cost\s*less|price)\b/i.test(
+          latestMessage!,
+        );
+      const wantsAlternatives =
+        /\b(show\s*(?:me\s*)?(?:more|other|alternative|different|option)|other\s*choice|more\s*option|see\s*more|show\s*alternative|any\s+(?:\w+\s+)?option|compact\s+option|smaller\s+(?:pump|option|model)|other\s+model)\b/i.test(
+          latestMessage!,
+        );
+      const wantsDifferentType =
+        /\b(wrong\s*type|different\s*pump|simpler|smaller\s*pump|basic|less\s*complex)\b/i.test(
+          latestMessage!,
+        );
+      const wantsDifferentSpecs =
+        /\b(different\s*(?:flow|head|pressure|spec)|adjust|change\s*(?:the\s*)?spec|not\s*the\s*right\s*size)\b/i.test(
+          latestMessage!,
+        );
 
       let questionContext: string;
       if (wantsCheaper) {
-        questionContext = "The user thinks the recommended pump is too expensive. Ask what their rough budget is, or if they'd like to see a more basic (less featured) Grundfos model — without suggesting competitor brands.";
+        questionContext =
+          "The user thinks the recommended pump is too expensive. Ask what their rough budget is, or if they'd like to see a more basic (less featured) Grundfos model — without suggesting competitor brands.";
       } else if (wantsAlternatives) {
-        questionContext = "The user wants to see alternative options. Ask if they'd prefer a smaller/simpler model, a different Grundfos series, or if their specs need adjusting (different flow or head).";
+        questionContext =
+          "The user wants to see alternative options. Ask if they'd prefer a smaller/simpler model, a different Grundfos series, or if their specs need adjusting (different flow or head).";
       } else if (wantsDifferentType) {
-        questionContext = "The user wants a different pump type. Ask if they're looking for something simpler (fixed-speed instead of variable), a different installation type, or a different Grundfos product family.";
+        questionContext =
+          "The user wants a different pump type. Ask if they're looking for something simpler (fixed-speed instead of variable), a different installation type, or a different Grundfos product family.";
       } else if (wantsDifferentSpecs) {
-        questionContext = "The user wants to adjust their specs. Ask what specifically needs changing — flow rate, head pressure, building size, or application type.";
+        questionContext =
+          "The user wants to adjust their specs. Ask what specifically needs changing — flow rate, head pressure, building size, or application type.";
       } else {
-        questionContext = lastEngineAction === "recommend"
-          ? "The user just saw pump recommendations and replied with feedback or a comment (e.g. 'doesn't look good', 'too expensive', 'not what I need'). Ask what specifically they want changed — price, pump type, performance specs, or see alternatives? Keep it conversational."
-          : "The user is still refining their requirements after seeing pump recommendations. They haven't given new duty point specs yet. Ask what they'd like to change — building size, flow/pressure, budget, or see different options?";
+        questionContext =
+          lastEngineAction === "recommend"
+            ? "The user just saw pump recommendations and replied with feedback or a comment (e.g. 'doesn't look good', 'too expensive', 'not what I need'). Ask what specifically they want changed — price, pump type, performance specs, or see alternatives? Keep it conversational."
+            : "The user is still refining their requirements after seeing pump recommendations. They haven't given new duty point specs yet. Ask what they'd like to change — building size, flow/pressure, budget, or see different options?";
       }
 
       return {
         action: "ask",
         questionContext,
-        suggestions: ["Too expensive", "Wrong pump type", "Need different specs", "Show more options"],
+        suggestions: [
+          "Too expensive",
+          "Wrong pump type",
+          "Need different specs",
+          "Show more options",
+        ],
         state,
       };
     }
@@ -784,7 +1152,11 @@ export function getNextAction(
   if (state.evalDomain) {
     const d = state.evalDomain.toLowerCase();
     if (d.startsWith("wu-") || d === "wu") {
-      state = { ...state, application: "water_supply", waterSource: state.waterSource ?? "well" };
+      state = {
+        ...state,
+        application: "water_supply",
+        waterSource: state.waterSource ?? "well",
+      };
     } else if (d.startsWith("in-") || d === "in") {
       state = { ...state, application: "water_supply" };
     } else if (d.startsWith("cbs") || d.startsWith("dbs")) {
@@ -793,11 +1165,22 @@ export function getNextAction(
   }
 
   // ─── Greeting ─────────────────────────────────────────────────
-  if (latestMessage && GREETING_PATTERN.test(latestMessage) && !state.application && !state.flow_m3h && !state.existingPumpBrand) {
+  if (
+    latestMessage &&
+    GREETING_PATTERN.test(latestMessage) &&
+    !state.application &&
+    !state.flow_m3h &&
+    !state.existingPumpBrand
+  ) {
     return {
       action: "greet",
-      questionContext: "The user just greeted you. Greet them back warmly and ask how you can help — are they looking to find the right pump, replace an existing one, or save energy?",
-      suggestions: ["Find the right pump", "Replace my old pump", "Save energy on pumping"],
+      questionContext:
+        "The user just greeted you. Greet them back warmly and ask how you can help — are they looking to find the right pump, replace an existing one, or save energy?",
+      suggestions: [
+        "Find the right pump",
+        "Replace my old pump",
+        "Save energy on pumping",
+      ],
       state,
     };
   }
@@ -807,17 +1190,29 @@ export function getNextAction(
   // When a user provides an exact duty point (e.g. "2.5 m³/h 4m"), they're specifying
   // what they WANT, not what they have. Asking for their old pump brand in that case
   // breaks the flow; just recommend based on the duty point directly.
-  if (state.existingPumpBrand && !(state.flow_m3h != null && state.head_m != null)) {
+  if (
+    state.existingPumpBrand &&
+    !(state.flow_m3h != null && state.head_m != null)
+  ) {
     if (state.existingPump) {
       // Model known → try to cross-reference
-      const crossRef = findCompetitorMatch(state.existingPumpBrand, state.existingPump);
-      if (crossRef) return buildCompetitorRecommendation(state, crossRef, energyOptions);
+      const crossRef = findCompetitorMatch(
+        state.existingPumpBrand,
+        state.existingPump,
+      );
+      if (crossRef)
+        return buildCompetitorRecommendation(state, crossRef, energyOptions);
     }
     // Brand only (no model) → ask for model or application before recommending
     return {
       action: "ask",
       questionContext: `They mentioned a ${state.existingPumpBrand} pump but didn't say which model. Ask which model it is, or what it's used for — to find the exact Grundfos equivalent.`,
-      suggestions: ["Heating circulator", "Water pressure booster", "Borehole/well pump", "I know the model number"],
+      suggestions: [
+        "Heating circulator",
+        "Water pressure booster",
+        "Borehole/well pump",
+        "I know the model number",
+      ],
       state,
     };
   }
@@ -838,34 +1233,51 @@ export function getNextAction(
     // Matches any explicit confirmation that the user is satisfied with the estimate or wants to proceed.
     const estimateBypass =
       /\b(show[\s-]?pump|proceed|go[\s-]?ahead|looks?\s+(right|good|ok|correct|fine)|use\s+(this|estimate|it)|confirm|continue|yes\b|yep\b|sure\b|ok\b|okay\b|correct\b|find[\s-]?pump|recommend|alright|new[\s-]install(?:ation)?|proceed\s+with|that'?s?\s*(right|correct|fine|good))\b/i.test(
-        latestMessage || ""
+        latestMessage || "",
       );
 
     // ── Mandatory gate: domestic_water needs physical dimensions ──────────────
     // Bypass when exact duty-point specs are already provided (quality=10) —
     // we have enough to match pumps directly without floor/bathroom estimates.
-    if (state.application === "domestic_water" && !state.floors && !state.bathrooms
-        && (state.flow_m3h == null || state.head_m == null)) {
+    if (
+      state.application === "domestic_water" &&
+      !state.floors &&
+      !state.bathrooms &&
+      (state.flow_m3h == null || state.head_m == null)
+    ) {
       if (state.problem === "replacement" && !state.existingPumpBrand) {
         return {
           action: "ask",
-          questionContext: "They want to replace a pump but haven't said what it's used for. Ask what the pump does — water pressure at home, heating/cooling system, or a borehole/well pump?",
-          suggestions: ["Water pressure at home", "Heating system", "Borehole / well pump", "I know the brand/model"],
+          questionContext:
+            "They want to replace a pump but haven't said what it's used for. Ask what the pump does — water pressure at home, heating/cooling system, or a borehole/well pump?",
+          suggestions: [
+            "Water pressure at home",
+            "Heating system",
+            "Borehole / well pump",
+            "I know the brand/model",
+          ],
           state,
         };
       }
       if (state.problem) {
         return {
           action: "ask",
-          questionContext: "Ask how many floors their house has — this is needed to calculate the correct pump size. Focus only on floors.",
+          questionContext:
+            "Ask how many floors their house has — this is needed to calculate the correct pump size. Focus only on floors.",
           suggestions: ["1-2 floors", "3-4 floors", "5-6 floors", "7+ floors"],
           state,
         };
       }
       return {
         action: "ask",
-        questionContext: "They have a home but haven't described the water situation. Ask what's going on — low pressure, replacing a pump, new install, or high energy bills?",
-        suggestions: ["Low water pressure", "Replacing old pump", "New installation", "High water bills"],
+        questionContext:
+          "They have a home but haven't described the water situation. Ask what's going on — low pressure, replacing a pump, new install, or high energy bills?",
+        suggestions: [
+          "Low water pressure",
+          "Replacing old pump",
+          "New installation",
+          "High water bills",
+        ],
         state,
       };
     }
@@ -879,8 +1291,13 @@ export function getNextAction(
     ) {
       return {
         action: "ask",
-        questionContext: "Ask where their home water comes from — city/tap water (mains), a rooftop or ground storage tank, or a deep well/borehole? This decides which type of pump to recommend.",
-        suggestions: ["City / tap water", "Storage tank", "Deep well / borehole"],
+        questionContext:
+          "Ask where their home water comes from — city/tap water (mains), a rooftop or ground storage tank, or a deep well/borehole? This decides which type of pump to recommend.",
+        suggestions: [
+          "City / tap water",
+          "Storage tank",
+          "Deep well / borehole",
+        ],
         state,
       };
     }
@@ -896,8 +1313,13 @@ export function getNextAction(
     ) {
       return {
         action: "ask",
-        questionContext: "Ask where the water comes from — city/tap water (mains), a rooftop storage tank, or a deep well/borehole? This decides whether to recommend a pressure booster or a submersible pump.",
-        suggestions: ["City / tap water", "Storage tank", "Deep well / borehole"],
+        questionContext:
+          "Ask where the water comes from — city/tap water (mains), a rooftop storage tank, or a deep well/borehole? This decides whether to recommend a pressure booster or a submersible pump.",
+        suggestions: [
+          "City / tap water",
+          "Storage tank",
+          "Deep well / borehole",
+        ],
         state,
       };
     }
@@ -911,8 +1333,14 @@ export function getNextAction(
     ) {
       return {
         action: "ask",
-        questionContext: "Ask how many floors the building has — this is needed to calculate the water pressure (head) the pump must deliver.",
-        suggestions: ["1-3 floors", "4-8 floors", "9-15 floors", "I know the flow rate"],
+        questionContext:
+          "Ask how many floors the building has — this is needed to calculate the water pressure (head) the pump must deliver.",
+        suggestions: [
+          "1-3 floors",
+          "4-8 floors",
+          "9-15 floors",
+          "I know the flow rate",
+        ],
         state,
       };
     }
@@ -957,7 +1385,8 @@ export function getNextAction(
     ) {
       return {
         action: "ask",
-        questionContext: "Ask ONLY how many floors the building has. Answer options are floor ranges like '1-3 floors'. Do NOT ask about location, system type, or anything else.",
+        questionContext:
+          "Ask ONLY how many floors the building has. Answer options are floor ranges like '1-3 floors'. Do NOT ask about location, system type, or anything else.",
         suggestions: ["1-3 floors", "4-6 floors", "7-10 floors", "10+ floors"],
         state,
       };
@@ -972,8 +1401,14 @@ export function getNextAction(
     ) {
       return {
         action: "ask",
-        questionContext: "They want to replace a heating or cooling pump. Ask what brand and model the current pump is — this lets us find the exact Grundfos equivalent.",
-        suggestions: ["Wilo", "KSB", "Grundfos (older model)", "I have the model number"],
+        questionContext:
+          "They want to replace a heating or cooling pump. Ask what brand and model the current pump is — this lets us find the exact Grundfos equivalent.",
+        suggestions: [
+          "Wilo",
+          "KSB",
+          "Grundfos (older model)",
+          "I have the model number",
+        ],
         state,
       };
     }
@@ -1022,7 +1457,12 @@ export function getNextAction(
       questionContext: state.flow_m3h
         ? "They gave flow/pressure specs but haven't said what the system is for. Ask what application — heating, cooling, water supply, or wastewater?"
         : "Ask what kind of system the pump is for — heating/cooling, water supply, a home or a commercial building? Keep it open and non-assumptive.",
-      suggestions: ["Heating / cooling system", "Water supply / pressure", "Home water system", "Commercial or industrial"],
+      suggestions: [
+        "Heating / cooling system",
+        "Water supply / pressure",
+        "Home water system",
+        "Commercial or industrial",
+      ],
       state,
     };
   }
@@ -1032,8 +1472,14 @@ export function getNextAction(
     if (!state.problem) {
       return {
         action: "ask",
-        questionContext: "They have a home but haven't said why they need a pump. Ask what their water situation is — low pressure, no water, replacing an old pump, or wanting to save on bills?",
-        suggestions: ["Low water pressure", "No water at all", "Replacing old pump", "Save on energy bills"],
+        questionContext:
+          "They have a home but haven't said why they need a pump. Ask what their water situation is — low pressure, no water, replacing an old pump, or wanting to save on bills?",
+        suggestions: [
+          "Low water pressure",
+          "No water at all",
+          "Replacing old pump",
+          "Save on energy bills",
+        ],
         state,
       };
     }
@@ -1041,15 +1487,22 @@ export function getNextAction(
       // Replacing a pump — ask what it's used for before jumping to sizing
       return {
         action: "ask",
-        questionContext: "They want to replace a pump but haven't said what it's used for. Ask what the pump does — water pressure, heating/cooling, or borehole/well?",
-        suggestions: ["Water pressure at home", "Heating system", "Borehole / well pump", "I know the brand/model"],
+        questionContext:
+          "They want to replace a pump but haven't said what it's used for. Ask what the pump does — water pressure, heating/cooling, or borehole/well?",
+        suggestions: [
+          "Water pressure at home",
+          "Heating system",
+          "Borehole / well pump",
+          "I know the brand/model",
+        ],
         state,
       };
     }
     // Problem known (and not a blind replacement) but missing house size — ask floors only
     return {
       action: "ask",
-      questionContext: "Ask how many floors their building or home has — this determines the pump head required. Ask specifically about floors, not bathrooms.",
+      questionContext:
+        "Ask how many floors their building or home has — this determines the pump head required. Ask specifically about floors, not bathrooms.",
       suggestions: ["1-2 floors", "3-4 floors", "5-6 floors", "7+ floors"],
       state,
     };
@@ -1059,8 +1512,14 @@ export function getNextAction(
     if (!state.buildingSize && state.flow_m3h == null && !state.motor_kw) {
       return {
         action: "ask",
-        questionContext: "Ask about the size of the building or facility that needs water supply — a small shop, medium office/hotel, or a large factory or campus?",
-        suggestions: ["Small building / shop", "Medium (office/hotel)", "Large (factory/campus)", "I know the flow rate"],
+        questionContext:
+          "Ask about the size of the building or facility that needs water supply — a small shop, medium office/hotel, or a large factory or campus?",
+        suggestions: [
+          "Small building / shop",
+          "Medium (office/hotel)",
+          "Large (factory/campus)",
+          "I know the flow rate",
+        ],
         state,
       };
     }
@@ -1068,8 +1527,14 @@ export function getNextAction(
     if (!state.floors && state.flow_m3h == null && !state.motor_kw) {
       return {
         action: "ask",
-        questionContext: "Ask how many floors the building or facility has — this determines the water pressure the pump must deliver.",
-        suggestions: ["1-3 floors", "4-8 floors", "9-15 floors", "I know the flow rate"],
+        questionContext:
+          "Ask how many floors the building or facility has — this determines the water pressure the pump must deliver.",
+        suggestions: [
+          "1-3 floors",
+          "4-8 floors",
+          "9-15 floors",
+          "I know the flow rate",
+        ],
         state,
       };
     }
@@ -1080,15 +1545,22 @@ export function getNextAction(
     if (state.problem === "replacement" && !state.existingPumpBrand) {
       return {
         action: "ask",
-        questionContext: "They want to replace a heating or cooling pump. Ask what brand and model the current pump is — this lets us find the exact Grundfos equivalent.",
-        suggestions: ["Wilo", "KSB", "Grundfos (older model)", "I have the model number"],
+        questionContext:
+          "They want to replace a heating or cooling pump. Ask what brand and model the current pump is — this lets us find the exact Grundfos equivalent.",
+        suggestions: [
+          "Wilo",
+          "KSB",
+          "Grundfos (older model)",
+          "I have the model number",
+        ],
         state,
       };
     }
     if (!state.floors && !state.buildingSize) {
       return {
         action: "ask",
-        questionContext: "Ask ONLY how many floors the building has. Answer options are floor ranges like '1-3 floors'. Do NOT ask about location, system type, or anything else.",
+        questionContext:
+          "Ask ONLY how many floors the building has. Answer options are floor ranges like '1-3 floors'. Do NOT ask about location, system type, or anything else.",
         suggestions: ["1-3 floors", "4-6 floors", "7-10 floors", "10+ floors"],
         state,
       };
@@ -1097,7 +1569,8 @@ export function getNextAction(
     if (!state.floors) {
       return {
         action: "ask",
-        questionContext: "Ask ONLY how many floors the building has. Answer options are floor ranges like '1-3 floors'. Do NOT ask about location, system type, or anything else.",
+        questionContext:
+          "Ask ONLY how many floors the building has. Answer options are floor ranges like '1-3 floors'. Do NOT ask about location, system type, or anything else.",
         suggestions: ["1-3 floors", "4-6 floors", "7-10 floors", "10+ floors"],
         state,
       };
@@ -1107,8 +1580,13 @@ export function getNextAction(
   if (state.application === "wastewater" && !state.buildingSize) {
     return {
       action: "ask",
-      questionContext: "Ask about the scale of the wastewater system — is it a home basement sump, a small commercial building, or a large industrial site?",
-      suggestions: ["Home / basement", "Small building", "Large commercial / industrial"],
+      questionContext:
+        "Ask about the scale of the wastewater system — is it a home basement sump, a small commercial building, or a large industrial site?",
+      suggestions: [
+        "Home / basement",
+        "Small building",
+        "Large commercial / industrial",
+      ],
       state,
     };
   }
@@ -1116,18 +1594,35 @@ export function getNextAction(
   if (state.application === "dosing" && !state.buildingSize) {
     return {
       action: "ask",
-      questionContext: "Ask about the dosing application — what chemical or substance they're dosing, and at what scale.",
-      suggestions: ["Chlorination", "pH adjustment", "Water treatment", "I know the flow rate"],
+      questionContext:
+        "Ask about the dosing application — what chemical or substance they're dosing, and at what scale.",
+      suggestions: [
+        "Chlorination",
+        "pH adjustment",
+        "Water treatment",
+        "I know the flow rate",
+      ],
       state,
     };
   }
 
   // No useful information at all — ask an open question instead of attempting a recommendation
-  if (!state.application && !state.flow_m3h && !state.motor_kw && !state.existingPumpBrand) {
+  if (
+    !state.application &&
+    !state.flow_m3h &&
+    !state.motor_kw &&
+    !state.existingPumpBrand
+  ) {
     return {
       action: "ask",
-      questionContext: "We have no information yet about what the user needs. Ask what kind of pump system or water problem they need help with — keep it open and welcoming.",
-      suggestions: ["Water pressure at home", "Heating / cooling system", "Replace an old pump", "Industrial or commercial"],
+      questionContext:
+        "We have no information yet about what the user needs. Ask what kind of pump system or water problem they need help with — keep it open and welcoming.",
+      suggestions: [
+        "Water pressure at home",
+        "Heating / cooling system",
+        "Replace an old pump",
+        "Industrial or commercial",
+      ],
       state,
     };
   }
@@ -1140,12 +1635,12 @@ export function getNextAction(
 
 function matchPumpsByMotorPower(
   motorKw: number,
-  evalDomain?: string
+  evalDomain?: string,
 ): Array<{ pump: CatalogPump; confidence: number; label: string }> {
   const pumps = (pumpCatalog.pumps || []) as unknown as CatalogPump[];
   const tolerance = 0.35; // ±35% power tolerance
 
-  const domainPrefs = evalDomain ? (DOMAIN_PREFERENCE[evalDomain] || {}) : {};
+  const domainPrefs = evalDomain ? DOMAIN_PREFERENCE[evalDomain] || {} : {};
 
   const candidates = pumps.filter((p) => {
     const pumpKw = safeNumber(p.specs.power_kw) || safeNumber(p.specs.motor_kw);
@@ -1159,11 +1654,12 @@ function matchPumpsByMotorPower(
 
   // Motor-drive domain check — only a "Motor" category product is the exact right fit.
   // A pump (Multistage, Submersible) sharing the same power spec is a weaker match.
-  const isDomainMotorDrive = !!(evalDomain?.toLowerCase().includes("motordrive"));
+  const isDomainMotorDrive = !!evalDomain?.toLowerCase().includes("motordrive");
 
   // Sort by: closest power match, then domain preference
   const scored = candidates.map((pump) => {
-    const pumpKw = safeNumber(pump.specs.power_kw) || safeNumber(pump.specs.motor_kw) || 0;
+    const pumpKw =
+      safeNumber(pump.specs.power_kw) || safeNumber(pump.specs.motor_kw) || 0;
     const powerDiff = Math.abs(pumpKw - motorKw) / motorKw;
     const familyKey = pump.family.toUpperCase().replace(/\d+/g, "").trim();
     const prefBonus = domainPrefs[familyKey] || 0;
@@ -1173,26 +1669,39 @@ function matchPumpsByMotorPower(
     //   Motor category  → perfect product type  (+4)
     //   Pump category   → wrong product type    (−12)
     const isMotorCategory = pump.category.toLowerCase() === "motor";
-    const catBonus   = (isDomainMotorDrive && isMotorCategory)  ?  4 : 0;
-    const catPenalty = (isDomainMotorDrive && !isMotorCategory) ? 12 : 0;
-    const rawConf = Math.min(99, Math.max(40, Math.round(
-      95 - powerDiff * 30 + prefContrib + catBonus - catPenalty
-    )));
+    const catBonus = isDomainMotorDrive && isMotorCategory ? 4 : 0;
+    const catPenalty = isDomainMotorDrive && !isMotorCategory ? 12 : 0;
+    const rawConf = Math.min(
+      99,
+      Math.max(
+        40,
+        Math.round(95 - powerDiff * 30 + prefContrib + catBonus - catPenalty),
+      ),
+    );
     return { pump, powerDiff, prefBonus, rawConf };
   });
 
-  scored.sort((a, b) => (a.powerDiff - b.powerDiff) - (a.prefBonus - b.prefBonus) * 0.05);
+  scored.sort(
+    (a, b) => a.powerDiff - b.powerDiff - (a.prefBonus - b.prefBonus) * 0.05,
+  );
 
   // Apply the same rank-based display cap used in matchPumpsByDutyPoint —
   // prevents score inversions and gives a clear winner vs. alternatives.
   let prevConf = 100;
   return scored.slice(0, 3).map((s) => {
-    const displayConf = Math.max(40, Math.min(prevConf - (prevConf < 100 ? 3 : 0), s.rawConf));
+    const displayConf = Math.max(
+      40,
+      Math.min(prevConf - (prevConf < 100 ? 3 : 0), s.rawConf),
+    );
     prevConf = displayConf;
     const label =
-      displayConf >= 90 ? "Excellent Match" :
-      displayConf >= 75 ? "Good Match" :
-      displayConf >= 60 ? "Fair Match" : "Partial Match";
+      displayConf >= 90
+        ? "Excellent Match"
+        : displayConf >= 75
+          ? "Good Match"
+          : displayConf >= 60
+            ? "Fair Match"
+            : "Partial Match";
     return { pump: s.pump, confidence: displayConf, label };
   });
 }
@@ -1203,7 +1712,7 @@ function matchPumpsByDutyPoint(
   dutyPoint: DutyPoint,
   application: Application,
   waterSource?: WaterSource,
-  evalDomain?: string
+  evalDomain?: string,
 ): Array<{ pump: CatalogPump; confidence: number; label: string }> {
   const pumps = (pumpCatalog.pumps || []) as unknown as CatalogPump[];
   const requiredFlow = dutyPoint.estimated_flow_m3h;
@@ -1228,7 +1737,11 @@ function matchPumpsByDutyPoint(
       }
     }
     // Tiny domestic flow+head = hot water recirculation → DBS-HotWater (UP/UPS/COMFORT)
-    if (application === "domestic_water" && requiredFlow < 3 && requiredHead < 5) {
+    if (
+      application === "domestic_water" &&
+      requiredFlow < 3 &&
+      requiredHead < 5
+    ) {
       effectiveDomain = "DBS-HotWater";
     }
   }
@@ -1236,19 +1749,19 @@ function matchPumpsByDutyPoint(
   // Normalize IN sub-domains to "IN" for DOMAIN_PREFERENCE lookup.
   // detectEvalDomain returns "IN-Coolant", "IN-Process", "IN-Booster" to allow future
   // sub-domain-specific prefs, but currently all map to the same "IN" preference set.
-  const prefDomain = effectiveDomain?.startsWith("IN-") ? "IN" : effectiveDomain;
+  const prefDomain = effectiveDomain?.startsWith("IN-")
+    ? "IN"
+    : effectiveDomain;
 
   // Family preferences: merge application defaults with domain overrides
   const appPrefs = FAMILY_PREFERENCE[application] || {};
-  const domainPrefs = prefDomain ? (DOMAIN_PREFERENCE[prefDomain] || {}) : {};
+  const domainPrefs = prefDomain ? DOMAIN_PREFERENCE[prefDomain] || {} : {};
   // Domain prefs take priority when a domain is known (explicit or inferred)
-  const preferences = prefDomain
-    ? { ...appPrefs, ...domainPrefs }
-    : appPrefs;
+  const preferences = prefDomain ? { ...appPrefs, ...domainPrefs } : appPrefs;
   // Water source bonus: if "well", boost borehole families
   const waterSourceBonus: Record<string, number> = {};
   if (waterSource === "well") {
-    waterSourceBonus["SQE"] = 12;  // SQE = variable-speed domestic well pump (best match)
+    waterSourceBonus["SQE"] = 12; // SQE = variable-speed domestic well pump (best match)
     waterSourceBonus["SQ"] = 8;
     waterSourceBonus["SP"] = 6;
   }
@@ -1259,7 +1772,18 @@ function matchPumpsByDutyPoint(
   // SP/SQ/SQE: require a drilled borehole — only correct when waterSource="well"
   // MTH: industrial 3-phase coolant pump — wrong for any residential use
   // HYDRO removed from list (no longer in catalog)
-  const DOMESTIC_WATER_EXCLUDED_FAMILIES = ["CR", "CRE", "NB", "NK", "SP", "SQ", "SQE", "MTH", "MAGNA3", "ALPHA3"];
+  const DOMESTIC_WATER_EXCLUDED_FAMILIES = [
+    "CR",
+    "CRE",
+    "NB",
+    "NK",
+    "SP",
+    "SQ",
+    "SQE",
+    "MTH",
+    "MAGNA3",
+    "ALPHA3",
+  ];
 
   const candidates = pumps.filter((p) => {
     // Category exclusion — fundamentally wrong pump types
@@ -1270,20 +1794,24 @@ function matchPumpsByDutyPoint(
     // water_supply: also exclude when explicitly mains/tank (borehole pumps are wrong for mains supply).
     const excludeBoreholeFamily =
       (application === "domestic_water" && waterSource !== "well") ||
-      (application === "water_supply" && (waterSource === "mains" || waterSource === "tank"));
+      (application === "water_supply" &&
+        (waterSource === "mains" || waterSource === "tank"));
     if (excludeBoreholeFamily) {
       const familyKey = p.family.toUpperCase().replace(/\d+/g, "").trim();
-      if (DOMESTIC_WATER_EXCLUDED_FAMILIES.some((f) => familyKey.startsWith(f))) return false;
+      if (DOMESTIC_WATER_EXCLUDED_FAMILIES.some((f) => familyKey.startsWith(f)))
+        return false;
     }
 
     const maxFlow = safeNumber(p.specs.max_flow_m3h);
     const maxHead = safeNumber(p.specs.max_head_m);
     if (!maxFlow || !maxHead) return false;
-    if (!(maxFlow >= requiredFlow * 0.7 && maxHead >= requiredHead * 0.85)) return false;
+    if (!(maxFlow >= requiredFlow * 0.7 && maxHead >= requiredHead * 0.85))
+      return false;
     // Domain-aware exclusion: when the domain is clearly identified (e.g. IN-MotorDrive),
     // exclude pump families that belong to a completely different domain group.
     // This prevents residential circulators appearing for industrial queries, etc.
-    if (effectiveDomain && isDomainExcluded(p.family, effectiveDomain)) return false;
+    if (effectiveDomain && isDomainExcluded(p.family, effectiveDomain))
+      return false;
     return true;
   });
 
@@ -1292,9 +1820,30 @@ function matchPumpsByDutyPoint(
     // "cooling system" matches MAGNA3/MAGNA1/TP. "cooling water" matches CR 5-5.
     // "coolant" matches MTH ("Industrial coolant") and CR ("Cooling water" contains "water" not "coolant"
     // so adding "cooling water" as explicit keyword closes this gap).
-    cooling: ["cooling system", "cooling water", "coolant", "hvac", "circulator", "air conditioning"],
-    water_supply: ["water supply", "pressure boosting", "multistage", "booster", "irrigation", "industrial process", "industrial water"],
-    domestic_water: ["domestic", "booster", "residential", "self-priming", "drinking water"],
+    cooling: [
+      "cooling system",
+      "cooling water",
+      "coolant",
+      "hvac",
+      "circulator",
+      "air conditioning",
+    ],
+    water_supply: [
+      "water supply",
+      "pressure boosting",
+      "multistage",
+      "booster",
+      "irrigation",
+      "industrial process",
+      "industrial water",
+    ],
+    domestic_water: [
+      "domestic",
+      "booster",
+      "residential",
+      "self-priming",
+      "drinking water",
+    ],
     wastewater: ["wastewater", "sewage", "drainage"],
     dosing: ["dosing", "chemical", "treatment"],
   };
@@ -1314,14 +1863,16 @@ function matchPumpsByDutyPoint(
     // rated-point scoring. Without the cap, TP would score artificially well for DBS circulator duties.
     const ratedFlow = safeNumber(pump.specs.rated_flow_m3h);
     const ratedHead = safeNumber(pump.specs.rated_head_m);
-    const useRatedPoint = ratedFlow !== null && ratedHead !== null
-      && ratedFlow >= requiredFlow * 0.95
-      && ratedHead >= requiredHead * 0.95
-      && ratedFlow <= requiredFlow * 2.5;  // BEP must be within 2.5× of requirement
+    const useRatedPoint =
+      ratedFlow !== null &&
+      ratedHead !== null &&
+      ratedFlow >= requiredFlow * 0.95 &&
+      ratedHead >= requiredHead * 0.95 &&
+      ratedFlow <= requiredFlow * 2.5; // BEP must be within 2.5× of requirement
 
-    const scoringFlow = useRatedPoint ? (ratedFlow / requiredFlow) : flowRatio;
-    const scoringHead = useRatedPoint ? (ratedHead / requiredHead) : headRatio;
-    const idealRatio  = useRatedPoint ? 1.0 : 1.2;
+    const scoringFlow = useRatedPoint ? ratedFlow / requiredFlow : flowRatio;
+    const scoringHead = useRatedPoint ? ratedHead / requiredHead : headRatio;
+    const idealRatio = useRatedPoint ? 1.0 : 1.2;
 
     // Head scoring — asymmetric when flow is undersized AND head is not massively oversized:
     // When a pump can't reach the required flow (flowRatio < 1.0), a moderate head margin is a
@@ -1330,19 +1881,23 @@ function matchPumpsByDutyPoint(
     // Example: ALPHA2 (maxHead=8m, headRatio=1.78) for a 4.5m duty → benefit applies.
     // Counter-example: UPS 15-40 (maxHead=4m, headRatio=2.5) for a 1.6m duty → symmetric
     // penalty applies (2.5× head oversize is wrong, not beneficial for hot water recirculation).
-    const headScore = flowRatio < 1.0 && scoringHead <= 2.0
-      ? Math.max(0, idealRatio - scoringHead) - Math.max(0, scoringHead - idealRatio) * 0.15
-      : Math.abs(scoringHead - idealRatio);
+    const headScore =
+      flowRatio < 1.0 && scoringHead <= 2.0
+        ? Math.max(0, idealRatio - scoringHead) -
+          Math.max(0, scoringHead - idealRatio) * 0.15
+        : Math.abs(scoringHead - idealRatio);
 
     const oversizeScore = Math.abs(scoringFlow - idealRatio) + headScore;
 
-    const appText = [...(pump.applications || []), pump.type, pump.category].join(" ").toLowerCase();
+    const appText = [...(pump.applications || []), pump.type, pump.category]
+      .join(" ")
+      .toLowerCase();
     const appMatch = keywords.some((kw) => appText.includes(kw));
     const appPenalty = appMatch ? 0 : 8;
 
     const rawEEI = safeNumber(pump.specs.eei);
-    const eei = rawEEI ?? 0.2;  // default to class-A typical (0.2) for totalScore calc
-    const hasActualEEI = rawEEI !== null;   // only circulators with real EEI data get the confidence bonus
+    const eei = rawEEI ?? 0.2; // default to class-A typical (0.2) for totalScore calc
+    const hasActualEEI = rawEEI !== null; // only circulators with real EEI data get the confidence bonus
     const eeiScore = eei * 2;
 
     // Family preference bonus (lower score = better)
@@ -1354,18 +1909,38 @@ function matchPumpsByDutyPoint(
     // Detect VSD: variable speed drive / auto-adapt / constant-pressure pumps
     // These self-regulate — oversizing penalty should be capped (they run slower, not wastefully)
     const featureText = (pump.features || []).join(" ").toLowerCase();
-    const isVSD = /variable[\s-]?speed|autoadapt|auto[\s-]?adapt|integrated[\s-]?(?:inverter|frequency)|constant[\s-]?pressure/.test(featureText);
+    const isVSD =
+      /variable[\s-]?speed|autoadapt|auto[\s-]?adapt|integrated[\s-]?(?:inverter|frequency)|constant[\s-]?pressure/.test(
+        featureText,
+      );
 
     // When rated-point scoring is active, pass rated ratios to confidence display too.
     // Without this, CR 5-5 at 3/6 uses max-spec ratios (8/3=2.67, 30/6=5.0) → oversizeFactor=5
     // → 30 base → floor of 40%. With rated point (2.9/3=0.967, 5.8/6=0.967) → base≈99.
     const confFlow = useRatedPoint ? scoringFlow : flowRatio;
     const confHead = useRatedPoint ? scoringHead : headRatio;
-    const { score: confidence, label } = calculateConfidence(confFlow, confHead, appMatch, eei, totalPrefBonus, isVSD, hasActualEEI);
+    const { score: confidence, label } = calculateConfidence(
+      confFlow,
+      confHead,
+      appMatch,
+      eei,
+      totalPrefBonus,
+      isVSD,
+      hasActualEEI,
+    );
 
-    const totalScore = oversizeScore + appPenalty + eeiScore - (totalPrefBonus * 0.5);
+    const totalScore =
+      oversizeScore + appPenalty + eeiScore - totalPrefBonus * 0.5;
 
-    return { pump, score: totalScore, confidence, label, flowRatio, headRatio, appMatch };
+    return {
+      pump,
+      score: totalScore,
+      confidence,
+      label,
+      flowRatio,
+      headRatio,
+      appMatch,
+    };
   });
 
   scored.sort((a, b) => a.score - b.score);
@@ -1376,22 +1951,30 @@ function matchPumpsByDutyPoint(
   // there aren't 3 app-matched candidates (prevents empty results for niche applications).
   const appMatched = scored.filter((s) => s.appMatch);
   const notMatched = scored.filter((s) => !s.appMatch);
-  const topScored = appMatched.length >= 3
-    ? appMatched.slice(0, 3)
-    : [...appMatched, ...notMatched].slice(0, 3);
+  const topScored =
+    appMatched.length >= 3
+      ? appMatched.slice(0, 3)
+      : [...appMatched, ...notMatched].slice(0, 3);
 
   // Rank-based confidence: each lower-ranked pump shows at most (previous - 3)%.
   // Using a running cap (not just idx*3) prevents inversions where a pump with a higher raw
   // confidence appears at a lower rank but shows a bigger percentage than the winner.
   let prevConf = 100;
   return topScored.map((s) => {
-    const displayConf = Math.max(40, Math.min(prevConf - (prevConf < 100 ? 3 : 0), s.confidence));
+    const displayConf = Math.max(
+      40,
+      Math.min(prevConf - (prevConf < 100 ? 3 : 0), s.confidence),
+    );
     prevConf = displayConf;
     // Derive label from displayConf (not stale s.label) so label always matches displayed %
     const label =
-      displayConf >= 90 ? "Excellent Match" :
-      displayConf >= 75 ? "Good Match" :
-      displayConf >= 60 ? "Fair Match" : "Partial Match";
+      displayConf >= 90
+        ? "Excellent Match"
+        : displayConf >= 75
+          ? "Good Match"
+          : displayConf >= 60
+            ? "Fair Match"
+            : "Partial Match";
     return { pump: s.pump, confidence: displayConf, label };
   });
 }
@@ -1408,11 +1991,15 @@ function parsePrice(priceRange: string): number {
 
 function parsePricePhp(priceRange: string): string {
   const parts = priceRange.replace(/[,$]/g, "").split("-").map(Number);
-  if (parts.length === 2) return `₱${(parts[0] * USD_TO_PHP).toLocaleString()}-${(parts[1] * USD_TO_PHP).toLocaleString()}`;
+  if (parts.length === 2)
+    return `₱${(parts[0] * USD_TO_PHP).toLocaleString()}-${(parts[1] * USD_TO_PHP).toLocaleString()}`;
   return `₱${((parts[0] || 500) * USD_TO_PHP).toLocaleString()}`;
 }
 
-function getOperatingHours(application: Application, buildingSize: BuildingSize): number {
+function getOperatingHours(
+  application: Application,
+  buildingSize: BuildingSize,
+): number {
   const hours: Partial<Record<Application, Record<BuildingSize, number>>> = {
     heating: { small: 2000, medium: 3500, large: 4380 },
     cooling: { small: 1500, medium: 2000, large: 2190 },
@@ -1421,17 +2008,25 @@ function getOperatingHours(application: Application, buildingSize: BuildingSize)
     wastewater: { small: 2000, medium: 3500, large: 6000 },
     dosing: { small: 8760, medium: 8760, large: 8760 },
   };
-  return hours[application]?.[buildingSize] || DEFAULT_OPERATING_HOURS[application as keyof typeof DEFAULT_OPERATING_HOURS] || 4380;
+  return (
+    hours[application]?.[buildingSize] ||
+    DEFAULT_OPERATING_HOURS[
+      application as keyof typeof DEFAULT_OPERATING_HOURS
+    ] ||
+    4380
+  );
 }
 
 // Variable oversizing factors
-const OVERSIZING_FACTORS: Partial<Record<Application, Record<BuildingSize, number>>> = {
+const OVERSIZING_FACTORS: Partial<
+  Record<Application, Record<BuildingSize, number>>
+> = {
   domestic_water: { small: 2.0, medium: 1.6, large: 1.3 },
-  water_supply:   { small: 1.8, medium: 1.4, large: 1.2 },
-  heating:        { small: 1.6, medium: 1.3, large: 1.2 },
-  cooling:        { small: 1.5, medium: 1.3, large: 1.2 },
-  wastewater:     { small: 1.5, medium: 1.3, large: 1.2 },
-  dosing:         { small: 1.2, medium: 1.2, large: 1.2 },
+  water_supply: { small: 1.8, medium: 1.4, large: 1.2 },
+  heating: { small: 1.6, medium: 1.3, large: 1.2 },
+  cooling: { small: 1.5, medium: 1.3, large: 1.2 },
+  wastewater: { small: 1.5, medium: 1.3, large: 1.2 },
+  dosing: { small: 1.2, medium: 1.2, large: 1.2 },
 };
 
 function deriveDomesticDutyPoint(state: ConversationState): DutyPoint {
@@ -1443,12 +2038,20 @@ function deriveDomesticDutyPoint(state: ConversationState): DutyPoint {
   if (state.bathrooms) {
     const fixtures = state.bathrooms * 2 + 2;
     const peak_lps = fixtures * 0.15 * 0.7;
-    flow_m3h = Math.round((peak_lps * 3600) / 1000 * 10) / 10;
-    assumptions.push(`${state.bathrooms} bathrooms → ${fixtures} fixtures (diversity 0.7)`);
+    flow_m3h = Math.round(((peak_lps * 3600) / 1000) * 10) / 10;
+    assumptions.push(
+      `${state.bathrooms} bathrooms → ${fixtures} fixtures (diversity 0.7)`,
+    );
   } else {
-    const flowBySize: Record<BuildingSize, number> = { small: 1.2, medium: 3.5, large: 8.0 };
+    const flowBySize: Record<BuildingSize, number> = {
+      small: 1.2,
+      medium: 3.5,
+      large: 8.0,
+    };
     flow_m3h = flowBySize[state.buildingSize || "small"];
-    assumptions.push(`Estimated from ${state.buildingSize || "small"} building`);
+    assumptions.push(
+      `Estimated from ${state.buildingSize || "small"} building`,
+    );
   }
   assumptions.push(`Peak flow: ${flow_m3h} m³/h`);
 
@@ -1456,8 +2059,11 @@ function deriveDomesticDutyPoint(state: ConversationState): DutyPoint {
   const static_head = floors * 3;
   const friction_head = static_head * 0.15;
   const boost_margin = 5;
-  const head_m = Math.round((static_head + friction_head + boost_margin) * 10) / 10;
-  assumptions.push(`Head: ${head_m} m (${floors} floors × 3m + friction + 5m boost)`);
+  const head_m =
+    Math.round((static_head + friction_head + boost_margin) * 10) / 10;
+  assumptions.push(
+    `Head: ${head_m} m (${floors} floors × 3m + friction + 5m boost)`,
+  );
 
   return {
     estimated_flow_m3h: flow_m3h,
@@ -1467,7 +2073,10 @@ function deriveDomesticDutyPoint(state: ConversationState): DutyPoint {
   };
 }
 
-function buildRecommendation(state: ConversationState, energyOptions?: { co2Override?: number }): EngineResult {
+function buildRecommendation(
+  state: ConversationState,
+  energyOptions?: { co2Override?: number },
+): EngineResult {
   const application = state.application || "water_supply";
   const buildingSize = state.buildingSize || "medium";
   const region = DEFAULT_ENERGY_RATES.PH;
@@ -1476,29 +2085,59 @@ function buildRecommendation(state: ConversationState, energyOptions?: { co2Over
 
   // Motor-power-only path (when only motor kW/hp is given, no flow/head)
   if (state.motor_kw && !state.flow_m3h && !state.head_m) {
-    const motorMatches = matchPumpsByMotorPower(state.motor_kw, state.evalDomain);
-    const recommendedPumps: RecommendedPump[] = motorMatches.map(({ pump, confidence, label }) => {
-      const newPower = safeNumber(pump.specs.power_kw) || safeNumber(pump.specs.motor_kw) || state.motor_kw!;
-      const existingPower = state.motor_kw! * 1.2;
-      const pumpCostPhp = parsePrice(pump.price_range_usd) * USD_TO_PHP;
-      const roi = calcROISummary(
-        { power_kw: existingPower, operating_hours: operatingHours, electricity_rate: region.rate, co2_factor: co2 },
-        { power_kw: newPower, operating_hours: operatingHours, electricity_rate: region.rate, co2_factor: co2 },
-        pumpCostPhp
-      );
-      return {
-        ...pump,
-        price_range_php: parsePricePhp(pump.price_range_usd),
-        roi,
-        oversizingNote: pump.category.toLowerCase() === "motor"
-          ? `${pump.specs.efficiency_class ? `${String(pump.specs.efficiency_class)} efficiency` : "IEC motor"} — exact ${state.motor_kw} kW match`
-          : `Motor power match: ${state.motor_kw} kW (pump assembly)`,
-        matchConfidence: confidence,
-        matchLabel: label,
-      };
-    });
-    const dutyPt: DutyPoint = { estimated_flow_m3h: 0, estimated_head_m: 0, confidence: "estimated", assumptions: [`Motor power: ${state.motor_kw} kW`] };
-    return { action: "recommend", dutyPoint: dutyPt, pumps: recommendedPumps, requirements: [{ label: "Motor Power", value: `${state.motor_kw} kW` }], state };
+    const motorMatches = matchPumpsByMotorPower(
+      state.motor_kw,
+      state.evalDomain,
+    );
+    const recommendedPumps: RecommendedPump[] = motorMatches.map(
+      ({ pump, confidence, label }) => {
+        const newPower =
+          safeNumber(pump.specs.power_kw) ||
+          safeNumber(pump.specs.motor_kw) ||
+          state.motor_kw!;
+        const existingPower = state.motor_kw! * 1.2;
+        const pumpCostPhp = parsePrice(pump.price_range_usd) * USD_TO_PHP;
+        const roi = calcROISummary(
+          {
+            power_kw: existingPower,
+            operating_hours: operatingHours,
+            electricity_rate: region.rate,
+            co2_factor: co2,
+          },
+          {
+            power_kw: newPower,
+            operating_hours: operatingHours,
+            electricity_rate: region.rate,
+            co2_factor: co2,
+          },
+          pumpCostPhp,
+        );
+        return {
+          ...pump,
+          price_range_php: parsePricePhp(pump.price_range_usd),
+          roi,
+          oversizingNote:
+            pump.category.toLowerCase() === "motor"
+              ? `${pump.specs.efficiency_class ? `${String(pump.specs.efficiency_class)} efficiency` : "IEC motor"} — exact ${state.motor_kw} kW match`
+              : `Motor power match: ${state.motor_kw} kW (pump assembly)`,
+          matchConfidence: confidence,
+          matchLabel: label,
+        };
+      },
+    );
+    const dutyPt: DutyPoint = {
+      estimated_flow_m3h: 0,
+      estimated_head_m: 0,
+      confidence: "estimated",
+      assumptions: [`Motor power: ${state.motor_kw} kW`],
+    };
+    return {
+      action: "recommend",
+      dutyPoint: dutyPt,
+      pumps: recommendedPumps,
+      requirements: [{ label: "Motor Power", value: `${state.motor_kw} kW` }],
+      state,
+    };
   }
 
   let dutyPoint: DutyPoint;
@@ -1514,8 +2153,16 @@ function buildRecommendation(state: ConversationState, energyOptions?: { co2Over
     dutyPoint = deriveDomesticDutyPoint(state);
   } else if (application === "wastewater") {
     // Wastewater: estimate based on building size
-    const flowBySize: Record<BuildingSize, number> = { small: 2, medium: 8, large: 30 };
-    const headBySize: Record<BuildingSize, number> = { small: 8, medium: 15, large: 25 };
+    const flowBySize: Record<BuildingSize, number> = {
+      small: 2,
+      medium: 8,
+      large: 30,
+    };
+    const headBySize: Record<BuildingSize, number> = {
+      small: 8,
+      medium: 15,
+      large: 25,
+    };
     dutyPoint = {
       estimated_flow_m3h: flowBySize[buildingSize],
       estimated_head_m: headBySize[buildingSize],
@@ -1541,64 +2188,81 @@ function buildRecommendation(state: ConversationState, energyOptions?: { co2Over
     });
   }
 
-  const matched = matchPumpsByDutyPoint(dutyPoint, application, state.waterSource, state.evalDomain);
-  const oversizingFactor = OVERSIZING_FACTORS[application]?.[buildingSize] || 1.4;
+  const matched = matchPumpsByDutyPoint(
+    dutyPoint,
+    application,
+    state.waterSource,
+    state.evalDomain,
+  );
+  const oversizingFactor =
+    OVERSIZING_FACTORS[application]?.[buildingSize] || 1.4;
 
-  const recommendedPumps: RecommendedPump[] = matched.map(({ pump, confidence, label }) => {
-    const newPower = safeNumber(pump.specs.power_kw) || 0.1;
-    const maxFlow = safeNumber(pump.specs.max_flow_m3h) || 1;
-    const maxHead = safeNumber(pump.specs.max_head_m) || 1;
-    const pumpCostUsd = parsePrice(pump.price_range_usd);
-    const pumpCostPhp = pumpCostUsd * USD_TO_PHP;
+  const recommendedPumps: RecommendedPump[] = matched.map(
+    ({ pump, confidence, label }) => {
+      const newPower = safeNumber(pump.specs.power_kw) || 0.1;
+      const maxFlow = safeNumber(pump.specs.max_flow_m3h) || 1;
+      const maxHead = safeNumber(pump.specs.max_head_m) || 1;
+      const pumpCostUsd = parsePrice(pump.price_range_usd);
+      const pumpCostPhp = pumpCostUsd * USD_TO_PHP;
 
-    // Per-pump ROI: use THIS pump's actual oversizing ratio
-    const pumpOversizeRatio = Math.max(maxFlow / dutyPoint.estimated_flow_m3h, maxHead / dutyPoint.estimated_head_m);
-    const typicalOversizedPower = newPower * Math.min(oversizingFactor, pumpOversizeRatio);
-    const loadFraction = 1 / Math.max(pumpOversizeRatio, 1);
-    const efficientPower = newPower * Math.max(loadFraction, 0.3);
+      // Per-pump ROI: use THIS pump's actual oversizing ratio
+      const pumpOversizeRatio = Math.max(
+        maxFlow / dutyPoint.estimated_flow_m3h,
+        maxHead / dutyPoint.estimated_head_m,
+      );
+      const typicalOversizedPower =
+        newPower * Math.min(oversizingFactor, pumpOversizeRatio);
+      const loadFraction = 1 / Math.max(pumpOversizeRatio, 1);
+      const efficientPower = newPower * Math.max(loadFraction, 0.3);
 
-    const roi = calcROISummary(
-      {
-        power_kw: typicalOversizedPower,
-        operating_hours: operatingHours,
-        electricity_rate: region.rate,
-        co2_factor: co2,
-      },
-      {
-        power_kw: efficientPower,
-        operating_hours: operatingHours,
-        electricity_rate: region.rate,
-        co2_factor: co2,
-      },
-      pumpCostPhp
-    );
+      const roi = calcROISummary(
+        {
+          power_kw: typicalOversizedPower,
+          operating_hours: operatingHours,
+          electricity_rate: region.rate,
+          co2_factor: co2,
+        },
+        {
+          power_kw: efficientPower,
+          operating_hours: operatingHours,
+          electricity_rate: region.rate,
+          co2_factor: co2,
+        },
+        pumpCostPhp,
+      );
 
-    const flowRatio = maxFlow / dutyPoint.estimated_flow_m3h;
-    const headRatio = maxHead / dutyPoint.estimated_head_m;
+      const flowRatio = maxFlow / dutyPoint.estimated_flow_m3h;
+      const headRatio = maxHead / dutyPoint.estimated_head_m;
 
-    let oversizingNote: string;
-    if (flowRatio > 3 || headRatio > 3) {
-      oversizingNote = "This pump exceeds your requirement by 3x+. Consider consulting a Grundfos engineer.";
-    } else if (roi.efficiency_improvement_pct > 30) {
-      oversizingNote = "Right-sizing saves significant energy vs. a typical oversized installation";
-    } else {
-      oversizingNote = "Well-matched to your requirements with good efficiency";
-    }
+      let oversizingNote: string;
+      if (flowRatio > 3 || headRatio > 3) {
+        oversizingNote =
+          "This pump exceeds your requirement by 3x+. Consider consulting a Grundfos engineer.";
+      } else if (roi.efficiency_improvement_pct > 30) {
+        oversizingNote =
+          "Right-sizing saves significant energy vs. a typical oversized installation";
+      } else {
+        oversizingNote =
+          "Well-matched to your requirements with good efficiency";
+      }
 
-    return {
-      ...pump,
-      price_range_php: parsePricePhp(pump.price_range_usd),
-      roi,
-      oversizingNote,
-      matchConfidence: confidence,
-      matchLabel: label,
-    };
-  });
+      return {
+        ...pump,
+        price_range_php: parsePricePhp(pump.price_range_usd),
+        roi,
+        oversizingNote,
+        matchConfidence: confidence,
+        matchLabel: label,
+      };
+    },
+  );
 
   // Sort by matchConfidence descending so the "Best Match" label always goes to the
   // highest-confidence pump. totalScore drives eval accuracy internally; this sort ensures
   // the display order is intuitive for users (highest % match shown first).
-  recommendedPumps.sort((a, b) => (b.matchConfidence ?? 0) - (a.matchConfidence ?? 0));
+  recommendedPumps.sort(
+    (a, b) => (b.matchConfidence ?? 0) - (a.matchConfidence ?? 0),
+  );
 
   const requirements = buildRequirementsSummary(state, dutyPoint);
 
@@ -1611,7 +2275,11 @@ function buildRecommendation(state: ConversationState, energyOptions?: { co2Over
   };
 }
 
-function buildCompetitorRecommendation(state: ConversationState, crossRefPump: CatalogPump, energyOptions?: { co2Override?: number }): EngineResult {
+function buildCompetitorRecommendation(
+  state: ConversationState,
+  crossRefPump: CatalogPump,
+  energyOptions?: { co2Override?: number },
+): EngineResult {
   const application = state.application || "heating";
   const buildingSize = state.buildingSize || "medium";
   const region = DEFAULT_ENERGY_RATES.PH;
@@ -1623,9 +2291,19 @@ function buildCompetitorRecommendation(state: ConversationState, crossRefPump: C
   const pumpCostPhp = parsePrice(crossRefPump.price_range_usd) * USD_TO_PHP;
 
   const roi = calcROISummary(
-    { power_kw: existingPower, operating_hours: operatingHours, electricity_rate: region.rate, co2_factor: co2 },
-    { power_kw: newPower, operating_hours: operatingHours, electricity_rate: region.rate, co2_factor: co2 },
-    pumpCostPhp
+    {
+      power_kw: existingPower,
+      operating_hours: operatingHours,
+      electricity_rate: region.rate,
+      co2_factor: co2,
+    },
+    {
+      power_kw: newPower,
+      operating_hours: operatingHours,
+      electricity_rate: region.rate,
+      co2_factor: co2,
+    },
+    pumpCostPhp,
   );
 
   const comparedTo = state.existingPump
@@ -1650,15 +2328,29 @@ function buildCompetitorRecommendation(state: ConversationState, crossRefPump: C
       confidence: "calculated",
       assumptions: ["User provided exact specifications"],
     };
-    const matched = matchPumpsByDutyPoint(dutyPoint, application, state.waterSource);
+    const matched = matchPumpsByDutyPoint(
+      dutyPoint,
+      application,
+      state.waterSource,
+    );
     for (const { pump, confidence, label } of matched) {
       if (pump.id === crossRefPump.id) continue;
       const p = safeNumber(pump.specs.power_kw) || 0.1;
       const pCost = parsePrice(pump.price_range_usd) * USD_TO_PHP;
       const pRoi = calcROISummary(
-        { power_kw: existingPower, operating_hours: operatingHours, electricity_rate: region.rate, co2_factor: co2 },
-        { power_kw: p, operating_hours: operatingHours, electricity_rate: region.rate, co2_factor: co2 },
-        pCost
+        {
+          power_kw: existingPower,
+          operating_hours: operatingHours,
+          electricity_rate: region.rate,
+          co2_factor: co2,
+        },
+        {
+          power_kw: p,
+          operating_hours: operatingHours,
+          electricity_rate: region.rate,
+          co2_factor: co2,
+        },
+        pCost,
       );
       otherPumps.push({
         ...pump,
@@ -1675,11 +2367,17 @@ function buildCompetitorRecommendation(state: ConversationState, crossRefPump: C
   const requirements: Array<{ label: string; value: string }> = [
     { label: "Current Pump", value: comparedTo },
   ];
-  if (state.existingPumpPower) requirements.push({ label: "Current Power", value: `${state.existingPumpPower} kW` });
+  if (state.existingPumpPower)
+    requirements.push({
+      label: "Current Power",
+      value: `${state.existingPumpPower} kW`,
+    });
   if (state.application) {
     requirements.push({
       label: "Application",
-      value: state.application.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()),
+      value: state.application
+        .replace(/_/g, " ")
+        .replace(/\b\w/g, (c) => c.toUpperCase()),
     });
   }
 
@@ -1692,12 +2390,17 @@ function buildCompetitorRecommendation(state: ConversationState, crossRefPump: C
   };
 }
 
-function buildRequirementsSummary(state: ConversationState, dutyPoint: DutyPoint): Array<{ label: string; value: string }> {
+function buildRequirementsSummary(
+  state: ConversationState,
+  dutyPoint: DutyPoint,
+): Array<{ label: string; value: string }> {
   const requirements: Array<{ label: string; value: string }> = [];
   if (state.application) {
     requirements.push({
       label: "Application",
-      value: state.application.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()),
+      value: state.application
+        .replace(/_/g, " ")
+        .replace(/\b\w/g, (c) => c.toUpperCase()),
     });
   }
   if (state.buildingSize) {
@@ -1706,12 +2409,27 @@ function buildRequirementsSummary(state: ConversationState, dutyPoint: DutyPoint
       medium: "Medium (4-8 floors)",
       large: "Large (9+ floors)",
     };
-    requirements.push({ label: "Building Size", value: sizeLabels[state.buildingSize] });
+    requirements.push({
+      label: "Building Size",
+      value: sizeLabels[state.buildingSize],
+    });
   }
-  if (state.bathrooms) requirements.push({ label: "Bathrooms", value: `${state.bathrooms}` });
-  if (state.waterSource) requirements.push({ label: "Water Source", value: state.waterSource.charAt(0).toUpperCase() + state.waterSource.slice(1) });
-  requirements.push({ label: "Est. Flow", value: `${dutyPoint.estimated_flow_m3h} m³/h` });
-  requirements.push({ label: "Est. Head", value: `${dutyPoint.estimated_head_m} m` });
+  if (state.bathrooms)
+    requirements.push({ label: "Bathrooms", value: `${state.bathrooms}` });
+  if (state.waterSource)
+    requirements.push({
+      label: "Water Source",
+      value:
+        state.waterSource.charAt(0).toUpperCase() + state.waterSource.slice(1),
+    });
+  requirements.push({
+    label: "Est. Flow",
+    value: `${dutyPoint.estimated_flow_m3h} m³/h`,
+  });
+  requirements.push({
+    label: "Est. Head",
+    value: `${dutyPoint.estimated_head_m} m`,
+  });
   if (state.flow_m3h != null && state.head_m != null) {
     requirements.push({ label: "Specs Source", value: "User-provided" });
   }
@@ -1726,7 +2444,7 @@ export function buildComparisonResult(
   pumpName1: string,
   pumpName2: string,
   state: ConversationState,
-  energyOptions?: { co2Override?: number }
+  energyOptions?: { co2Override?: number },
 ): [RecommendedPump, RecommendedPump] | null {
   const typedCatalog = pumpCatalog.pumps as unknown as CatalogPump[];
   const p1 = typedCatalog.find((p) => p.model === pumpName1);
@@ -1749,16 +2467,28 @@ export function buildComparisonResult(
     const reqHead = state.head_m ?? maxHead * 0.7;
 
     const pumpOversizeRatio = Math.max(maxFlow / reqFlow, maxHead / reqHead);
-    const oversizingFactor = OVERSIZING_FACTORS[application]?.[buildingSize] || 1.4;
-    const typicalOversizedPower = newPower * Math.min(oversizingFactor, pumpOversizeRatio);
+    const oversizingFactor =
+      OVERSIZING_FACTORS[application]?.[buildingSize] || 1.4;
+    const typicalOversizedPower =
+      newPower * Math.min(oversizingFactor, pumpOversizeRatio);
     const loadFraction = 1 / Math.max(pumpOversizeRatio, 1);
     const efficientPower = newPower * Math.max(loadFraction, 0.3);
     const pumpCostPhp = parsePrice(pump.price_range_usd) * USD_TO_PHP;
 
     const roi = calcROISummary(
-      { power_kw: typicalOversizedPower, operating_hours: operatingHours, electricity_rate: region.rate, co2_factor: co2 },
-      { power_kw: efficientPower, operating_hours: operatingHours, electricity_rate: region.rate, co2_factor: co2 },
-      pumpCostPhp
+      {
+        power_kw: typicalOversizedPower,
+        operating_hours: operatingHours,
+        electricity_rate: region.rate,
+        co2_factor: co2,
+      },
+      {
+        power_kw: efficientPower,
+        operating_hours: operatingHours,
+        electricity_rate: region.rate,
+        co2_factor: co2,
+      },
+      pumpCostPhp,
     );
 
     return {
@@ -1778,37 +2508,39 @@ export function buildComparisonResult(
 // Runs on ALL user messages so a technical user who starts vague is detected
 // once they provide specs, and stays technical for the rest of the conversation.
 
-export type UserExpertise = 'technical' | 'layperson';
+export type UserExpertise = "technical" | "layperson";
 
 export function detectUserExpertise(
-  messages: Array<{ role: string; content: string }>
+  messages: Array<{ role: string; content: string }>,
 ): UserExpertise {
   const userText = messages
-    .filter((m) => m.role === 'user')
+    .filter((m) => m.role === "user")
     .map((m) => m.content)
-    .join(' ');
+    .join(" ");
 
   // Strong technical signals — any single match means the user understands pump specs
   const technicalSignals: RegExp[] = [
-    /\b\d+(?:\.\d+)?\s*m[³3]\/h\b/i,              // m³/h flow rate (explicit)
-    /\b\d+(?:\.\d+)?\s*(?:gpm|l\/s|lpm)\b/i,       // other flow units (GPM, L/s, LPM)
-    /\bduty[\s-]?point\b/i,                         // "duty point"
-    /\bNPSH\b/,                                     // Net Positive Suction Head
-    /\bIE[0-9C]\b/,                                 // IE3, IE2, IEC efficiency classes
-    /\bIP[0-9]{2}\b/,                               // IP55, IP68 protection ratings
-    /\bVFD\b|\binverter[\s-]?drive\b/i,             // Variable Frequency Drive
+    /\b\d+(?:\.\d+)?\s*m[³3]\/h\b/i, // m³/h flow rate (explicit)
+    /\b\d+(?:\.\d+)?\s*(?:gpm|l\/s|lpm)\b/i, // other flow units (GPM, L/s, LPM)
+    /\bduty[\s-]?point\b/i, // "duty point"
+    /\bNPSH\b/, // Net Positive Suction Head
+    /\bIE[0-9C]\b/, // IE3, IE2, IEC efficiency classes
+    /\bIP[0-9]{2}\b/, // IP55, IP68 protection ratings
+    /\bVFD\b|\binverter[\s-]?drive\b/i, // Variable Frequency Drive
     /\bpump[\s-]?curve\b|\bperformance[\s-]?curve\b/i, // hydraulic curves
-    /\b\d+(?:\.\d+)?\s*m\s+(?:head|TDH)\b/i,       // "10 m head" or "10 m TDH"
-    /\btotal[\s-]?dynamic[\s-]?head\b|\bTDH\b/,    // TDH
-    /\bNPSHa?\b|\bcavitat/i,                        // NPSH / cavitation
-    /\bhydraulic[\s-]?grade\b|\bimpeller\b/i,       // impeller / hydraulic
-    /\bBEP\b/,                                      // Best Efficiency Point
+    /\b\d+(?:\.\d+)?\s*m\s+(?:head|TDH)\b/i, // "10 m head" or "10 m TDH"
+    /\btotal[\s-]?dynamic[\s-]?head\b|\bTDH\b/, // TDH
+    /\bNPSHa?\b|\bcavitat/i, // NPSH / cavitation
+    /\bhydraulic[\s-]?grade\b|\bimpeller\b/i, // impeller / hydraulic
+    /\bBEP\b/, // Best Efficiency Point
     /\bkPa\b|\bpsi\b(?!\s*problem)|\b\d+\s*bar\b/i, // pressure units (kPa, PSI, bar)
-    /\bflow[\s-]?rate\b.*\bm[³3]\/h\b/i,           // "flow rate ... m³/h"
+    /\bflow[\s-]?rate\b.*\bm[³3]\/h\b/i, // "flow rate ... m³/h"
     /\bhead[\s-]?pressure\b|\bpressure[\s-]?head\b/i, // technical head terminology
     /\befficiency[\s-]?class\b|\benergy[\s-]?class\b/i, // motor/pump efficiency class
     /\bmotor[\s-]?drive\b|\bvariable[\s-]?speed\s+drive\b/i, // motor-drive terminology
   ];
 
-  return technicalSignals.some((p) => p.test(userText)) ? 'technical' : 'layperson';
+  return technicalSignals.some((p) => p.test(userText))
+    ? "technical"
+    : "layperson";
 }

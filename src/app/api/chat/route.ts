@@ -52,6 +52,84 @@ async function callWithRetry<T>(
   }
 }
 
+type AskTopic =
+  | "greeting"
+  | "floors"
+  | "water_source"
+  | "brand_model"
+  | "estimate_path"
+  | "application"
+  | "problem"
+  | "building_size"
+  | "generic";
+
+function normalizeText(text: string): string {
+  return text.toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+function inferTopicFromSuggestions(suggestions: string[]): AskTopic {
+  const text = normalizeText(suggestions.join(" | "));
+
+  if (/\b(new installation|existing pump|exact flow|exact spec|load is actually|use this estimate|higher\/lower)\b/.test(text)) {
+    return "estimate_path";
+  }
+  if (/\b(floor|floors|storey|story)\b/.test(text)) return "floors";
+  if (/\b(city|tap|mains|well|borehole|tank|storage)\b/.test(text)) return "water_source";
+  if (/\b(wilo|ksb|grundfos|model number|brand)\b/.test(text)) return "brand_model";
+  if (/\b(small building|medium|large|factory|campus|home \/ basement)\b/.test(text)) return "building_size";
+  if (/\b(heating|cooling|water supply|home water|industrial|commercial|used for)\b/.test(text)) return "application";
+  if (/\b(low water|no water|high water bills|too expensive|wrong pump type|different specs|show more options|save on energy)\b/.test(text)) return "problem";
+  if (/\b(find the right pump|replace my old pump|save energy on pumping)\b/.test(text)) return "greeting";
+
+  return "generic";
+}
+
+function inferTopicFromQuestion(question: string): AskTopic {
+  const text = normalizeText(question);
+
+  if (/\b(what can i help|grundmatch|ai pump advisor)\b/.test(text)) return "greeting";
+  if (/\b(how many floors|floors)\b/.test(text)) return "floors";
+  if (/\b(where does your water come from|water source|city|tap|well|borehole|tank)\b/.test(text)) return "water_source";
+  if (/\b(brand and model|brand|model)\b/.test(text)) return "brand_model";
+  if (/\b(use this estimate|replace an existing pump|adjust the load|new installation)\b/.test(text)) return "estimate_path";
+  if (/\b(used for|what kind of system|pump going to be used for|best describes what the pump is used for)\b/.test(text)) return "application";
+  if (/\b(situation|water situation|what best describes your situation)\b/.test(text)) return "problem";
+  if (/\b(how large is the building|building size|small building|large building)\b/.test(text)) return "building_size";
+
+  return "generic";
+}
+
+function buildQuestionFromSuggestions(suggestions: string[]): string {
+  const topic = inferTopicFromSuggestions(suggestions);
+
+  if (topic === "greeting") {
+    return "Hey! I'm GrundMatch, Grundfos's AI pump advisor. What can I help you with?";
+  }
+  if (topic === "floors") {
+    return "How many floors does your building have?";
+  }
+  if (topic === "water_source") {
+    return "Where does your water come from?";
+  }
+  if (topic === "brand_model") {
+    return "What's the brand and model of the pump you're replacing?";
+  }
+  if (topic === "estimate_path") {
+    return "Would you like to use this estimate, replace an existing pump, or adjust the load estimate?";
+  }
+  if (topic === "application") {
+    return "What's the pump going to be used for?";
+  }
+  if (topic === "problem") {
+    return "What best describes your situation?";
+  }
+  if (topic === "building_size") {
+    return "How large is the building?";
+  }
+
+  return "Could you tell me a bit more about what you need?";
+}
+
 export async function POST(request: NextRequest) {
   try {
     const body: ChatRequest = await request.json();
@@ -365,6 +443,7 @@ export async function POST(request: NextRequest) {
         (engineResult.action === "greet"
           ? "Greet the user and ask what pump problem they need help with."
           : "Ask the user for more information about their pump needs.");
+      const fixedSuggestions = engineResult.suggestions?.length ? engineResult.suggestions : undefined;
 
       // ─── Layperson context sanitization ───────────────────────────────────
       // The engine's transparency gate injects raw duty-point numbers into questionContext
@@ -394,7 +473,8 @@ export async function POST(request: NextRequest) {
           knownContextStr,
           doNotAskFields,
           conversationTurns,
-          userExpertise
+          userExpertise,
+          fixedSuggestions
         );
 
         const qResponse = await callWithRetry(
@@ -438,8 +518,42 @@ export async function POST(request: NextRequest) {
         // Fallback handled below
       }
 
-      // Fallback question if LLM failed
-      if (!aiQuestion) aiQuestion = "Could you tell me a bit more about what you need?";
+      // Dynamic alignment: keep question topic synchronized with the active suggestion chips.
+      const suggestionSet = fixedSuggestions ?? aiSuggestions;
+      if (aiQuestion && suggestionSet.length > 0) {
+        const expectedTopic = inferTopicFromSuggestions(suggestionSet);
+        const actualTopic = inferTopicFromQuestion(aiQuestion);
+        if (expectedTopic !== "generic" && actualTopic !== expectedTopic) {
+          aiQuestion = buildQuestionFromSuggestions(suggestionSet);
+        }
+      }
+
+      if (!aiQuestion) {
+        if (suggestionSet.length > 0) {
+          aiQuestion = buildQuestionFromSuggestions(suggestionSet);
+        } else {
+          const ctx = (questionContext || "").toLowerCase();
+          if (/floor/.test(ctx)) {
+            aiQuestion = "How many floors does your building have?";
+          } else if (/water\s+source|where.{0,30}water\s+come/.test(ctx)) {
+            aiQuestion = "Where does your water come from?";
+          } else if (/brand|model|current\s+pump/.test(ctx)) {
+            aiQuestion = "What's the brand and model of the pump you're replacing?";
+          } else if (/application|system.{0,20}for|what.{0,20}pump.{0,20}(do|used|for)/.test(ctx)) {
+            aiQuestion = "What's the pump going to be used for?";
+          } else if (/problem|water\s+situation/.test(ctx)) {
+            aiQuestion = "What's the situation with your water system?";
+          } else if (/bathroom/.test(ctx)) {
+            aiQuestion = "How many bathrooms does your home have?";
+          } else if (/building\s+size|how\s+big/.test(ctx)) {
+            aiQuestion = "How large is the building?";
+          } else if (/greet/.test(ctx)) {
+            aiQuestion = "Hey! I'm GrundMatch, Grundfos's AI pump advisor. What can I help you with?";
+          } else {
+            aiQuestion = "Could you tell me a bit more about what you need?";
+          }
+        }
+      }
       // Engine suggestions always take priority — LLM-generated chips are only used
       // when the engine didn't specify any (prevents LLM from dropping brand names etc.)
       if (engineResult.suggestions?.length) {
