@@ -65,7 +65,6 @@ export function Navbar() {
 export function HeroSection() {
   return (
     <section className="relative overflow-hidden text-white py-20 md:py-28">
-      {/* Background Video */}
       <video
         autoPlay
         loop
@@ -76,23 +75,23 @@ export function HeroSection() {
         <source src="/sample-background-video.mp4" type="video/mp4" />
       </video>
 
-      {/* Blue Overlay */}
       <div className="absolute inset-0 bg-gradient-to-br from-grundfos-dark via-grundfos-blue to-grundfos-mid opacity-[0.70]" />
 
-      {/* Content */}
       <div className="relative z-10 max-w-5xl mx-auto px-6 text-center">
         <span className="inline-block bg-white/15 text-white text-xs font-semibold uppercase tracking-wider px-4 py-1.5 rounded-full mb-6">
-          About GrundMatch
+          Smarter Pump Selection
         </span>
+
         <h1 className="text-3xl md:text-5xl font-bold leading-tight mb-6">
-          Leading the Way in
+          Choose the Right Pump.
           <br />
-          Pump Solutions
+          Save Energy from Day One.
         </h1>
-        <p className="text-white/75 max-w-2xl mx-auto mb-10 text-sm md:text-base leading-relaxed">
-          For over 75 years, Grundfos has been at the forefront of pump
-          technology, innovation, and sustainable solutions worldwide.
-          GrundMatch uses AI to help you find the perfect pump instantly.
+
+        <p className="text-white/75 max-w-2xl mx-auto mb-10 text-sm md:text-base leading-relaxed text-center">
+          85% of pumps are often oversized — creating unnecessary energy costs and carbon emissions for decades.
+          GrundMatch helps you select the right-sized Grundfos pump based on your real requirements,
+          so you can reduce waste, cut operating costs, and make efficiency the standard.
         </p>
         <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
           <Link href="/chat">
@@ -123,23 +122,23 @@ export function HeroSection() {
 
 export function FeatureSection() {
   return (
-    <section className="py-16 bg-muted">
+    <section className="py-16 bg-muted text-justify">
       <div className="max-w-5xl mx-auto px-6 grid grid-cols-1 md:grid-cols-3 gap-8">
         {[
           {
-            icon: Globe,
-            title: "Global Presence",
-            desc: "Operating in more than 56 countries with production facilities worldwide, ensuring local support and global expertise.",
-          },
-          {
-            icon: Zap,
-            title: "Energy Efficient",
-            desc: "Our pumps are designed with sustainability in mind, reducing energy consumption and environmental impact.",
+            icon: MessageSquare,
+            title: "Simple Selection Process",
+            desc: "Describe your building in plain language. GrundMatch determines the correct flow and head requirements — no formulas required.",
           },
           {
             icon: Lightbulb,
-            title: "Innovation Leader",
-            desc: "Continuous research and development brings cutting-edge technology and superior performance to our products.",
+            title: "Optimized for Efficiency",
+            desc: "Right-sizing reduces energy consumption and operating costs — without compromising performance or reliability.",
+          },
+          {
+            icon: Zap,
+            title: "Instant Results",
+            desc: "Get immediate pump recommendations, performance insights, and cost estimates in seconds.",
           },
         ].map((f) => (
           <div
@@ -152,7 +151,7 @@ export function FeatureSection() {
             <h3 className="font-semibold text-grundfos-dark mb-2">
               {f.title}
             </h3>
-            <p className="text-sm text-muted-foreground leading-relaxed">
+            <p className="text-sm text-muted-foreground leading-relaxed text-justify">
               {f.desc}
             </p>
           </div>
@@ -167,24 +166,20 @@ export function ProductSection() {
     <section className="py-16 bg-grundfos-blue">
       <div className="max-w-5xl mx-auto px-6 md:px-12 text-center">
         <span className="inline-block bg-white/20 text-white text-xs font-semibold uppercase tracking-wider px-4 py-1.5 rounded-full mb-4">
-          Our Products
+          How It Works
         </span>
         <h2 className="text-2xl md:text-3xl font-bold text-white mb-2">
-          Comprehensive Pump Solutions
+          From Conversation to Right-Sized Pump
         </h2>
         <p className="text-white/75 text-sm mb-10">
-          We have the right pump for every need.
+          A guided process that ensures accurate, efficient pump selection.
         </p>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           {[
-            { icon: Waves, label: "Water Supply", description: "Reliable pumps for domestic and commercial water distribution" },
-            { icon: Flame, label: "Heating Systems", description: "Efficient circulation pumps for heating applications" },
-            { icon: Trash2, label: "Waste Water", description: "Robust solutions for wastewater management" },
-            { icon: Factory, label: "Industrial", description: "Heavy-duty pumps for industrial processes" },
-            { icon: Trees, label: "Irrigation", description: "Specialized pumps for agricultural needs" },
-            { icon: Bath, label: "Pool & Spa", description: "Efficient pumps for recreational water systems" },
-            { icon: Pipette, label: "Dosing Pumps", description: "Precise chemical dosing solutions" },
-            { icon: Settings, label: "Custom Solutions", description: "Tailored pump systems for unique requirements" },
+            { icon: MessageSquare, label: "Describe Entry Point	", description: "Tell us about your building — floors, water source, application. GrundMatch calculates the hydraulics for you." },
+            { icon: Settings, label: "Direct Entry Point	", description: "Already have your flow and head values? Enter them directly and get a matched pump instantly." },
+            { icon: Zap, label: "Pump Comparison", description: "Compare two Grundfos models head-to-head with a \"Better\" badge that flags the winner on efficiency and cost." },
+            { icon: Lightbulb, label: "PDF Business Case	", description: "Download a complete report with annual savings, 10-year ROI, payback period, and CO₂ reduction — ready for executive sign-off." },
           ].map((p) => (
             <div
               key={p.label}
@@ -216,29 +211,29 @@ export function ExcellenceSection() {
           Excellence in Every Detail
         </h2>
         <p className="text-muted-foreground text-sm mb-10">
-          We don&apos;t just sell pumps – we provide complete solutions backed by expertise and support.
+          We don&apos;t just sell pumps – we provide solutions backed by data and expertise.
         </p>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-left">
           {[
             {
               num: 1,
-              title: "Expert Consultation",
-              desc: "Our AI assistant and technical team help you select the perfect pump for your specific needs, ensuring optimal performance and efficiency.",
-            },
-            {
-              num: 3,
-              title: "Quality Assurance",
-              desc: "Access our AI assistant anytime, anywhere. Get instant answers to your questions and expert guidance when you need it.",
+              title: "Confident Decisions",
+              desc: "GrundMatch determines the appropriate duty point based on your inputs, helping you select a pump with clarity and confidence.",
             },
             {
               num: 2,
-              title: "24/7 Support",
-              desc: "Every Grundfos pump undergoes rigorous testing and quality control, guaranteeing reliability and long service life.",
+              title: "Clear Cost Insights",
+              desc: "View estimated annual energy savings, projected long-term returns, and payback period — all in one place.",
+            },
+            {
+              num: 3,
+              title: "Transparent Carbon Impact",
+              desc: "Each recommendation includes estimated annual CO₂ reduction, making sustainability performance clear and measurable.",
             },
             {
               num: 4,
-              title: "Sustainable Solutions",
-              desc: "Our commitment to sustainability means energy-efficient pumps that reduce costs and environmental impact.",
+              title: "Designed for Efficiency",
+              desc: "Because most pump emissions occur during operation, selecting the right size from the start supports long-term energy performance.",
             },
           ].map((item) => (
             <div
@@ -272,13 +267,11 @@ export function Footer() {
           <div>
             <div className="flex items-center gap-2 mb-4">
               <img src="/gm_logo.png" alt="GrundMatch" className="h-5 w-auto brightness-0 invert" />
-              <span className="font-bold">GRUNDFOS</span>
+              <span className="font-bold">GrundMatch</span>
             </div>
-            <p className="text-white/60 text-xs leading-relaxed">
-              Pioneering pump solutions for
-              a sustainable future. Trusted by
-              millions worldwide for
-              quality, innovation, and reliability.
+            <p className="text-white/60 text-xs leading-relaxed text-justify">
+              GrundMatch is a pump selection platform designed to reduce oversizing,
+              lower operating costs, and make energy efficiency the default.
             </p>
           </div>
           <div>
