@@ -675,6 +675,37 @@ export function getNextAction(
       if (mentioned.length >= 2) {
         return { action: "compare", comparePumps: [mentioned[0], mentioned[1]] as [string, string], state };
       }
+
+      // ── Domain-name compare: "compare DBS-HotWater to CBS-HVAC" ──────────
+      // When the user names eval domains instead of pump models, split the message
+      // on the separator word and detect a domain for each half, then map each
+      // domain to its most representative catalog pump.
+      const DOMAIN_TO_MODEL: Record<string, string> = {
+        "CBS":           "MAGNA3 100-120 F",
+        "CBS-HVAC":      "MAGNA3 100-120 F",
+        "DBS-Heating":   "ALPHA2 32-80 180",
+        "DBS-HotWater":  "UPS 15-40 130",
+        "IN-MotorDrive": "MG71C",
+        "IN-Coolant":    "MTH 2-4/2",
+        "IN-Process":    "CR 5-5",
+        "IN-Booster":    "CM 25-4",
+        "IN":            "CR 5-5",
+        "WU-Borehole":   "SQ 2-130 N",
+        "WU-Domestic":   "SQE 2-130 N",
+        "WU-Irrigation": "SP 3A-3",
+        "WU":            "SQE 2-130 N",
+      };
+      const parts = latestMessage.split(/\s+(?:vs\.?|versus|to|and|against|with|or)\s+/i);
+      if (parts.length >= 2) {
+        const domA = detectEvalDomain(parts[0]);
+        const domB = detectEvalDomain(parts[1]);
+        const modelA = domA ? DOMAIN_TO_MODEL[domA] : undefined;
+        const modelB = domB ? DOMAIN_TO_MODEL[domB] : undefined;
+        if (modelA && modelB && modelA !== modelB) {
+          return { action: "compare", comparePumps: [modelA, modelB] as [string, string], state };
+        }
+      }
+
       // Less than 2 names found — signal route.ts to use recently shown pumps from history
       return { action: "compare", comparePumps: null, state };
     }
