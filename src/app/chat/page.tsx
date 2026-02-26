@@ -7,7 +7,7 @@ import { ChatMessages } from "@/components/chat/ChatMessages";
 import { ChatInput } from "@/components/chat/ChatInput";
 import { AuthModal } from "@/components/auth/AuthModal";
 import { Button } from "@/components/ui/button";
-import { Menu, LogIn, LogOut, Home as HomeIcon } from "lucide-react";
+import { Menu, LogIn, LogOut, Home as HomeIcon, Droplets } from "lucide-react";
 import Link from "next/link";
 import { getUser, getSession, signOut } from "@/lib/auth";
 import type { User as SupabaseUser } from "@supabase/supabase-js";
@@ -240,7 +240,8 @@ export default function Home() {
           </Link>
 
           <div className="flex items-center gap-2">
-            <img src="/gm_logo.png" alt="GrundMatch" className="h-6 w-auto" />
+            <Droplets className="w-5 h-5 text-grundfos-blue" />
+            <h1 className="font-semibold text-grundfos-dark text-sm">GrundMatch</h1>
           </div>
 
           <div className="flex items-center gap-2 ml-auto">

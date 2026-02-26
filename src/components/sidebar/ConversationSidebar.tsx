@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useChatStore } from "@/lib/chat-store";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Plus, MessageSquare, Trash2, X } from "lucide-react";
+import { Plus, MessageSquare, Trash2, X, Droplets } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { getSession } from "@/lib/auth";
 
@@ -112,7 +112,8 @@ export function ConversationSidebar() {
         {/* Header */}
         <div className="flex items-center justify-between p-4 border-b border-sidebar-border">
           <div className="flex items-center gap-2">
-            <img src="/gm_logo.png" alt="GrundMatch" className="h-5 w-auto" />
+            <Droplets className="w-5 h-5 text-sidebar-primary" />
+            <span className="font-semibold text-sm">GrundMatch</span>
           </div>
           <div className="flex items-center gap-1">
             <Button

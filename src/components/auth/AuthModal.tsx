@@ -10,7 +10,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
-import { Mail, Loader2, User } from "lucide-react";
+import { Droplets, Mail, Loader2, User } from "lucide-react";
 import {
   signUpWithEmail,
   signInWithEmail,
@@ -80,7 +80,9 @@ export function AuthModal({ open, onOpenChange, onAuthSuccess }: AuthModalProps)
       <DialogContent className="sm:max-w-[400px]">
         <DialogHeader>
           <div className="flex items-center gap-2 mb-2">
-            <img src="/gm_logo.png" alt="GrundMatch" className="h-8 w-auto" />
+            <div className="w-8 h-8 rounded-lg bg-grundfos-blue flex items-center justify-center">
+              <Droplets className="w-4 h-4 text-white" />
+            </div>
             <DialogTitle className="text-grundfos-dark">
               {mode === "signin" ? "Sign in to GrundMatch" : "Create an account"}
             </DialogTitle>
