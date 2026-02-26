@@ -270,7 +270,7 @@ export function Footer() {
         <div className="grid grid-cols-2 md:grid-cols-4 gap-8 mb-8">
           <div>
             <div className="flex items-center gap-2 mb-4">
-              <Droplets className="w-5 h-5" />
+              <img src="/gm_logo.png" alt="GrundMatch" className="h-5 w-auto brightness-0 invert" />
               <span className="font-bold">GRUNDFOS</span>
             </div>
             <p className="text-white/60 text-xs leading-relaxed">
